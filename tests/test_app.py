@@ -1,5 +1,8 @@
 from sqlalchemy import create_engine
+
 from sqlalchemy.pool import StaticPool
+
+
 from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 from app.database import Base, get_db
@@ -11,6 +14,7 @@ from app.services.export import leads_to_csv
 from app.services.scoring import score_lead
 from app.services.search_service import generate_queries
 
+
 engine = create_engine(
     "sqlite://",
     connect_args={"check_same_thread": False},
@@ -18,6 +22,10 @@ engine = create_engine(
 )
 TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 Base.metadata.drop_all(bind=engine)
+
+engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
+TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
 Base.metadata.create_all(bind=engine)
 
 def override_get_db():
@@ -51,8 +59,12 @@ def test_save_and_filter_lead():
 
 def test_deduplication_by_email():
     db = TestingSessionLocal()
+
     lead_data = sample_lead(email="dup@example.com", score=90).model_dump()
     lead = Lead(**lead_data)
+
+    lead = Lead(**sample_lead(email="dup@example.com").model_dump(), score=90)
+
     db.add(lead); db.commit()
     assert find_duplicate(db, sample_lead(email="dup@example.com")) is not None
     db.close()
