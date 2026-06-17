@@ -1,0 +1,1 @@
+Проанализируй публичные факты о бьюти-лиде. Не выдумывай данные. Для каждого факта учитывай source_url. Верни: fit, pain_points, suggested_offer, risks, score_reason.
