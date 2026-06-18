@@ -114,6 +114,7 @@ curl -o leads.csv http://localhost:8000/export.csv
 pytest
 ```
 
+
 ## Запуск Discord-бота
 
 Discord-интерфейс использует `discord.py` slash commands и обращается к уже запущенному FastAPI backend.
@@ -158,3 +159,5 @@ python -m app.discord_bot
 - `/export` — скачивает `export.csv` из backend и отправляет CSV-файл в Discord.
 
 Если backend не запущен, бот покажет сообщение: `Backend не запущен. Запустите python -m uvicorn app.main:app --reload`.
+
+
