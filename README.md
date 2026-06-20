@@ -113,3 +113,51 @@ curl -o leads.csv http://localhost:8000/export.csv
 ```bash
 pytest
 ```
+
+
+## Запуск Discord-бота
+
+Discord-интерфейс использует `discord.py` slash commands и обращается к уже запущенному FastAPI backend.
+
+### Настройка `.env`
+
+Добавьте значения:
+
+```env
+DISCORD_BOT_TOKEN=your_discord_bot_token
+DISCORD_GUILD_ID=your_test_guild_id
+DISCORD_ALLOWED_USER_IDS=123456789012345678,987654321098765432
+API_URL=http://127.0.0.1:8000
+```
+
+- `DISCORD_BOT_TOKEN` хранится только в `.env` и не логируется.
+- `DISCORD_GUILD_ID` ускоряет синхронизацию slash commands для конкретного сервера. Если не задан, команды синхронизируются глобально.
+- `DISCORD_ALLOWED_USER_IDS` ограничивает доступ по Discord user id. Если список пустой, команды доступны всем пользователям сервера, где установлен бот.
+- Ответы бота по умолчанию приватные (`ephemeral=True`), чтобы список лидов и контакты не видели все участники сервера.
+
+### Запуск
+
+В одном терминале запустите backend:
+
+```bash
+python -m uvicorn app.main:app --reload
+```
+
+Во втором терминале запустите Discord-бота:
+
+```bash
+python -m app.discord_bot
+```
+
+### Slash commands
+
+- `/find_leads` — ищет лидов через `POST /search` и показывает первые результаты.
+- `/leads` — показывает список лидов с id, нишей, городом, score, контактом и статусом.
+- `/lead` — показывает подробную карточку лида.
+- `/message` — генерирует 3 варианта первого сообщения.
+- `/status` — меняет статус и заметки лида.
+- `/export` — скачивает `export.csv` из backend и отправляет CSV-файл в Discord.
+
+Если backend не запущен, бот покажет сообщение: `Backend не запущен. Запустите python -m uvicorn app.main:app --reload`.
+
+
