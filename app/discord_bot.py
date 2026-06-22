@@ -15,20 +15,6 @@ DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 HTTP_TIMEOUT_SECONDS = 120.0
 BACKEND_DOWN_MESSAGE = "Backend не запущен. Запустите python -m uvicorn app.main:app --reload"
 
-CARD_ERROR_MESSAGE = "Не удалось получить карточку лида. Проверьте работу backend."
-LEAD_NOT_FOUND_MESSAGE = "Лид не найден. Обновите список и выберите другого."
-
-SERVICE_LABELS = {
-    "auto": "auto",
-    "website": "сайт или страницу записи",
-    "telegram_bot": "Telegram-бот",
-    "booking_automation": "автоматизацию записи",
-    "funnel": "воронку",
-    "social_packaging": "упаковку социальных сетей",
-    "expert_launch": "запуск экспертного продукта",
-    "audit": "краткий аудит",
-}
-
 
 def parse_allowed_user_ids(raw: str | None) -> set[int]:
     if not raw:
@@ -37,14 +23,15 @@ def parse_allowed_user_ids(raw: str | None) -> set[int]:
     for item in raw.replace(";", ",").split(","):
         value = item.strip()
 
+
         if value and value.isdigit():
             allowed.add(int(value))
+
 
         if value:
             if value.isdigit():
                 allowed.add(int(value))
-
-
+    return allowed
 
 ALLOWED_USER_IDS = parse_allowed_user_ids(os.getenv("DISCORD_ALLOWED_USER_IDS"))
 
@@ -67,19 +54,27 @@ async def api_request(method: str, path: str, **kwargs: Any) -> httpx.Response |
             response.raise_for_status()
             return response
 
+    except httpx.ConnectError:
+        return None
+    except httpx.ConnectTimeout:
+
+
     except (httpx.ConnectError, httpx.ConnectTimeout):
 
     except httpx.ConnectError:
         return None
     except httpx.ConnectTimeout:
 
+
         return None
     except httpx.ReadTimeout:
         raise TimeoutError("Backend отвечает слишком долго. Попробуйте уменьшить limit или повторить позже.")
     except httpx.HTTPStatusError as exc:
 
+
         if exc.response.status_code == 404:
             raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
+
 
         detail = exc.response.text[:500]
         raise RuntimeError(f"Backend вернул ошибку {exc.response.status_code}: {detail}") from exc
@@ -92,6 +87,10 @@ def split_services(services: str) -> list[str]:
 
 
 
+def lead_contact(lead: dict[str, Any]) -> str:
+    for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
+
+
 def lead_public_id(lead: dict[str, Any]) -> str:
     return lead.get("lead_code") or f"#{lead.get('id')}"
 
@@ -102,6 +101,7 @@ def lead_contact(lead: dict[str, Any]) -> str:
 def lead_contact(lead: dict[str, Any]) -> str:
     for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
 
+
         value = lead.get(key)
         if value and value != "не найден":
             return str(value)
@@ -111,6 +111,7 @@ def lead_contact(lead: dict[str, Any]) -> str:
 def truncate(value: Any, limit: int = 900) -> str:
     text = str(value or "не найден")
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
 
 
 
@@ -204,6 +205,7 @@ def offer_text(lead: dict[str, Any], offer: dict[str, str], mode: str = "default
         f"**6. Ответ на “Что конкретно вы предлагаете?”:**\n{truncate(offer.get('specific_answer'), 650)}"
     )
 
+
 def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
     if not leads:
         return "Лиды не найдены."
@@ -218,20 +220,23 @@ def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
     return "\n".join(lines)
 
 
-
 def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     embed = discord.Embed(
+
 
         title=compact_lead_label(lead),
         description=truncate(lead.get("description"), 900),
         color=discord.Color.purple(),
     )
 
+
         title=f"#{lead.get('id')} — {truncate(lead.get('name'), 180)}",
         description=truncate(lead.get("description"), 900),
         color=discord.Color.purple(),
     )
     embed.add_field(name="Ниша / город", value=f"{lead.get('niche') or 'не найден'} / {lead.get('city') or 'не найден'}", inline=False)
+
+
 
     embed.add_field(name="Score", value=f"{lead.get('score', 0)} — {truncate(lead.get('score_reason'), 500)}", inline=False)
     embed.add_field(name="Контакт", value=truncate(lead_contact(lead), 500), inline=False)
@@ -242,54 +247,6 @@ def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     if lead.get("notes"):
         embed.add_field(name="Заметки", value=truncate(lead.get("notes"), 500), inline=False)
     return embed
-
-
-
-async def fetch_lead_candidates(query: str = "", limit: int = 25) -> list[dict[str, Any]]:
-    response = await api_request("GET", "/leads/search", params={"q": query, "limit": min(limit, 25)})
-    if response is None:
-        raise ConnectionError(CARD_ERROR_MESSAGE)
-    seen: set[str] = set()
-    unique: list[dict[str, Any]] = []
-    for lead in response.json():
-        key = str(lead.get("lead_code") or lead.get("id"))
-        if key not in seen:
-            seen.add(key)
-            unique.append(lead)
-    return unique[:25]
-
-
-async def fetch_lead(identifier: str) -> dict[str, Any]:
-    value = identifier.strip()
-    path = f"/leads/{value}" if value.isdigit() else f"/leads/by-code/{value.upper()}"
-    response = await api_request("GET", path)
-    if response is None:
-        raise ConnectionError(CARD_ERROR_MESSAGE)
-    return response.json()
-
-
-async def resolve_lead(identifier: str) -> dict[str, Any]:
-    value = identifier.strip()
-    if value.isdigit() or value.upper().startswith("BLF-"):
-        return await fetch_lead(value)
-    candidates = await fetch_lead_candidates(value, limit=1)
-    if not candidates:
-        raise LookupError(LEAD_NOT_FOUND_MESSAGE)
-    return await fetch_lead(str(candidates[0].get("lead_code") or candidates[0].get("id")))
-
-
-async def generate_offer_for_lead(lead: dict[str, Any], service: str = "auto") -> dict[str, str]:
-    code = lead.get("lead_code")
-    lead_id = lead.get("id")
-    path = f"/leads/by-code/{code}/outreach" if code else f"/leads/{lead_id}/outreach"
-    try:
-        response = await api_request("POST", path, params={"service": service})
-        if response is None:
-            return fallback_offer(lead, service=service)
-        return response.json()
-    except Exception:
-        return fallback_offer(lead, service=service)
-
 
 
 class BeautyLeadFinderBot(discord.Client):
@@ -308,131 +265,6 @@ class BeautyLeadFinderBot(discord.Client):
 
 
 bot = BeautyLeadFinderBot()
-
-
-
-class OfferResultView(discord.ui.View):
-    def __init__(self, lead: dict[str, Any], service: str = "auto") -> None:
-        super().__init__(timeout=600)
-        self.lead = lead
-        self.service = service
-
-    async def send_offer(self, interaction: discord.Interaction, mode: str = "default") -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        offer = await generate_offer_for_lead(self.lead, self.service)
-        await interaction.followup.send(offer_text(self.lead, offer, mode=mode), view=OfferResultView(self.lead, self.service), ephemeral=True)
-
-    @discord.ui.button(label="Сгенерировать заново", style=discord.ButtonStyle.primary)
-    async def regenerate(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.send_offer(interaction)
-
-    @discord.ui.button(label="Сделать короче", style=discord.ButtonStyle.secondary)
-    async def shorter(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.send_offer(interaction, mode="shorter")
-
-    @discord.ui.button(label="Сделать мягче", style=discord.ButtonStyle.secondary)
-    async def softer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.send_offer(interaction, mode="softer")
-
-    @discord.ui.button(label="Сделать конкретнее", style=discord.ButtonStyle.secondary)
-    async def specific(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await self.send_offer(interaction, mode="specific")
-
-    @discord.ui.button(label="Другой лид", style=discord.ButtonStyle.secondary)
-    async def another(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await show_lead_picker(interaction, self.service)
-
-
-class OfferConfirmView(discord.ui.View):
-    def __init__(self, lead: dict[str, Any], service: str = "auto") -> None:
-        super().__init__(timeout=600)
-        self.lead = lead
-        self.service = service
-
-    @discord.ui.button(label="Создать оффер", style=discord.ButtonStyle.primary)
-    async def create_offer(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        offer = await generate_offer_for_lead(self.lead, self.service)
-        await interaction.followup.send(offer_text(self.lead, offer), view=OfferResultView(self.lead, self.service), ephemeral=True)
-
-    @discord.ui.button(label="Выбрать другого лида", style=discord.ButtonStyle.secondary)
-    async def choose_another(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await show_lead_picker(interaction, self.service)
-
-    @discord.ui.button(label="Отмена", style=discord.ButtonStyle.danger)
-    async def cancel(self, interaction: discord.Interaction, button: discord.ui.Button) -> None:
-        await interaction.response.send_message("Генерация отменена.", ephemeral=True)
-
-
-class LeadSelect(discord.ui.Select):
-    def __init__(self, leads: list[dict[str, Any]], service: str = "auto") -> None:
-        self.service = service
-        options = [
-            discord.SelectOption(
-                label=truncate(compact_lead_label(lead), 100),
-                value=str(lead.get("lead_code") or lead.get("id")),
-                description=truncate(f"score {lead.get('score', 0)}", 100),
-            )
-            for lead in leads[:25]
-        ]
-        super().__init__(placeholder="Выберите лида", min_values=1, max_values=1, options=options)
-
-    async def callback(self, interaction: discord.Interaction) -> None:
-        await interaction.response.defer(ephemeral=True, thinking=True)
-        try:
-            lead = await fetch_lead(self.values[0])
-        except LookupError:
-            await interaction.followup.send(LEAD_NOT_FOUND_MESSAGE, ephemeral=True)
-            return
-        except Exception:
-            await interaction.followup.send(CARD_ERROR_MESSAGE, ephemeral=True)
-            return
-        await interaction.followup.send(confirmation_text(lead, self.service), view=OfferConfirmView(lead, self.service), ephemeral=True)
-
-
-class LeadSelectView(discord.ui.View):
-    def __init__(self, leads: list[dict[str, Any]], service: str = "auto") -> None:
-        super().__init__(timeout=600)
-        self.add_item(LeadSelect(leads, service=service))
-
-
-async def show_lead_picker(interaction: discord.Interaction, service: str = "auto") -> None:
-    try:
-        leads = await fetch_lead_candidates("", limit=25)
-    except Exception:
-        message = CARD_ERROR_MESSAGE
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
-        return
-    if not leads:
-        message = "Нет подходящих лидов. Сначала запустите /find_leads."
-        if interaction.response.is_done():
-            await interaction.followup.send(message, ephemeral=True)
-        else:
-            await interaction.response.send_message(message, ephemeral=True)
-        return
-    message = "Выберите лида, для которого нужно подготовить оффер:"
-    view = LeadSelectView(leads, service=service)
-    if interaction.response.is_done():
-        await interaction.followup.send(message, view=view, ephemeral=True)
-    else:
-        await interaction.response.send_message(message, view=view, ephemeral=True)
-
-
-async def lead_autocomplete(interaction: discord.Interaction, current: str) -> list[app_commands.Choice[str]]:
-    if not is_allowed(interaction):
-        return []
-    try:
-        leads = await fetch_lead_candidates(current, limit=25)
-    except Exception:
-        return []
-    return [
-        app_commands.Choice(name=truncate(compact_lead_label(lead), 100), value=str(lead.get("lead_code") or lead.get("id")))
-        for lead in leads[:25]
-    ]
-
 
 
 @bot.tree.command(name="find_leads", description="Найти beauty-лидов через backend")
@@ -515,6 +347,7 @@ async def leads(
 
 @bot.tree.command(name="lead", description="Показать подробную карточку лида")
 
+
 @app_commands.autocomplete(lead=lead_autocomplete)
 async def lead(interaction: discord.Interaction, lead: str) -> None:
     if not await ensure_allowed(interaction):
@@ -573,6 +406,7 @@ async def status(interaction: discord.Interaction, lead: str, status: str, notes
     updated = response.json()
     await interaction.followup.send(
         f"Статус лида `{lead_public_id(updated)}` обновлён: **{updated.get('status')}**",
+
 
 async def lead(interaction: discord.Interaction, lead_id: int) -> None:
     if not await ensure_allowed(interaction):

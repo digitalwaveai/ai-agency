@@ -1,6 +1,4 @@
 
-
-
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -12,14 +10,6 @@ from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
-
-
-from app.database import Base, assign_lead_code, assign_missing_lead_codes, get_db
-
-
-from sqlalchemy import create_engine
-from sqlalchemy.orm import sessionmaker
-from fastapi.testclient import TestClient
 
 from app.database import Base, get_db
 
@@ -105,18 +95,17 @@ def sample_lead(**kw):
 
 
 
+
 def test_generate_queries():
     qs = generate_queries(SearchRequest(niche="косметолог", city="Москва", services=["сайт"]))
     assert any("косметолог Москва" in q for q in qs)
     assert any("WhatsApp" in q for q in qs)
 
 
-
 def test_scoring():
     score, reason = score_lead(sample_lead(), SearchRequest(niche="косметолог", city="Москва"))
     assert score >= 80
     assert "контакт" in reason
-
 
 
 def test_save_and_filter_lead():
@@ -159,10 +148,10 @@ def test_outreach_generation():
     r = client.get("/leads")
     lead_id = r.json()[0]["id"]
 
-
     msg = client.post(f"/leads/{lead_id}/outreach")
     assert msg.status_code == 200
     assert {"soft", "business", "short"}.issubset(msg.json())
+
 
 
 def test_new_lead_gets_unique_lead_code():
@@ -318,4 +307,5 @@ def test_outreach_generation():
     msg = client.post(f"/leads/{lead_id}/outreach")
     assert msg.status_code == 200
     assert {"soft", "business", "short"}.issubset(msg.json())
+
 

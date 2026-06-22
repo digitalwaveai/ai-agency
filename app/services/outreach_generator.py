@@ -90,6 +90,8 @@ def generate_outreach(lead: Lead, service: str = "auto") -> dict[str, str]:
         "follow_up": follow_up,
         "specific_answer": specific_answer,
         "recommended_service": recommended_service,
+    }
+
 
 def generate_outreach(lead: Lead) -> dict[str, str]:
     name = lead.name or "Здравствуйте"
@@ -104,3 +106,4 @@ def generate_outreach(lead: Lead) -> dict[str, str]:
         "short": f"Здравствуйте, {name}. Видно, что у вас {niche} в {city}; могу подсказать, как упростить запись через {offer}. Показать короткий пример?",
 
     }
+
