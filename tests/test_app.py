@@ -1,17 +1,4 @@
 
-import atexit
-import os
-import tempfile
-from pathlib import Path
-
-_TEST_TMPDIR = tempfile.TemporaryDirectory()
-TEST_DB_PATH = Path(_TEST_TMPDIR.name) / "test_leads.db"
-os.environ["DATABASE_URL"] = f"sqlite:///{TEST_DB_PATH}"
-os.environ["DEMO_MODE"] = "true"
-os.environ["SEARCH_PROVIDER"] = "demo"
-atexit.register(_TEST_TMPDIR.cleanup)
-
-
 
 
 import os
@@ -20,14 +7,10 @@ os.environ.setdefault("DATABASE_URL", "sqlite://")
 os.environ.setdefault("DEMO_MODE", "true")
 os.environ.setdefault("SEARCH_PROVIDER", "demo")
 
-
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker
-
-from app.database import Base, assign_lead_code, assign_missing_lead_codes, get_db
-
 from sqlalchemy.pool import StaticPool
 
 
@@ -40,7 +23,6 @@ from fastapi.testclient import TestClient
 
 from app.database import Base, get_db
 
-
 from app.main import app
 from app.models import Lead
 from app.schemas import LeadCreate, SearchRequest
@@ -51,27 +33,15 @@ from app.services.search_service import generate_queries
 
 
 engine = create_engine(
-    f"sqlite:///{TEST_DB_PATH}",
-    connect_args={"check_same_thread": False},
-
-
-engine = create_engine(
     "sqlite://",
     connect_args={"check_same_thread": False},
     poolclass=StaticPool,
-
 )
 TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
 
 
 def reset_test_db() -> None:
-
-    # Import models before create_all so the leads table is registered on Base.metadata.
-    import app.models  # noqa: F401
-
-
     # Importing Lead above registers the model on Base.metadata before create_all().
-
     Base.metadata.drop_all(bind=engine)
     Base.metadata.create_all(bind=engine)
 
@@ -93,9 +63,6 @@ def test_database():
     reset_test_db()
     yield
     Base.metadata.drop_all(bind=engine)
-
-    engine.dispose()
-
 
 
 def sample_lead(**kw):
@@ -135,7 +102,6 @@ client = TestClient(app)
 def sample_lead(**kw):
     data = dict(name="Косметолог Анна", niche="косметолог", city="Москва", country="Россия", website_url="https://anna.example.com", instagram_url="https://instagram.com/anna", email="anna@example.com", phone="+79990000000", whatsapp="+79990000000", description="Косметолог Москва, запись через WhatsApp, сайта нет, консультации", pain_points="ручная запись, нет сайта", suggested_offer="сайт", source_url="https://example.com/anna", source_type="demo")
     data.update(kw); return LeadCreate(**data)
-
 
 
 
@@ -322,7 +288,6 @@ def test_discord_message_helpers_do_not_require_manual_client_fields():
     assert offer["recommended_service"] in {"website", "booking_automation", "audit"}
 
 
-
 def test_save_and_filter_lead():
     payload = {"niche":"косметолог","city":"Москва","country":"Россия","services":["сайт"],"limit":2,"min_score":0,"contacts_only":False}
     r = client.post("/search", json=payload)
@@ -353,5 +318,4 @@ def test_outreach_generation():
     msg = client.post(f"/leads/{lead_id}/outreach")
     assert msg.status_code == 200
     assert {"soft", "business", "short"}.issubset(msg.json())
-
 

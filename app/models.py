@@ -9,10 +9,6 @@ class Lead(Base):
 
     lead_code: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
 
-
-    lead_code: Mapped[str | None] = mapped_column(String(20), unique=True, index=True)
-
-
     name: Mapped[str] = mapped_column(String(255), index=True)
     niche: Mapped[str | None] = mapped_column(String(120), index=True)
     city: Mapped[str | None] = mapped_column(String(120), index=True)
