@@ -4,6 +4,7 @@ from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
 
 
+
 class Base(DeclarativeBase):
     pass
 
@@ -13,6 +14,11 @@ def _connect_args(url: str) -> dict:
         return {"check_same_thread": False}
     return {}
 
+
+from sqlalchemy import create_engine
+
+from sqlalchemy.orm import DeclarativeBase, sessionmaker
+from .config import get_settings
 
 settings = get_settings()
 database_url = settings.database_url
@@ -121,10 +127,12 @@ def assign_missing_lead_codes(db) -> None:
 def init_db() -> None:
     global _initialized
 
+
     from . import models  # noqa: F401
 
     Base.metadata.create_all(bind=engine)
     ensure_lead_code_column()
+
     _initialized = True
 
 
@@ -132,9 +140,21 @@ def get_db():
     if not _initialized:
         init_db()
 
+
+def get_db():
+
+
+
     db = SessionLocal()
 
     try:
         yield db
     finally:
         db.close()
+
+
+def init_db():
+    from . import models
+    Base.metadata.create_all(bind=engine)
+
+

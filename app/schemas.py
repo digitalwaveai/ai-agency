@@ -18,10 +18,6 @@ class LeadBase(BaseModel):
 
     lead_code: str | None = None
 
-
-    lead_code: str | None = None
-
-
     niche: str | None = None
     city: str | None = None
     country: str | None = None
@@ -76,9 +72,7 @@ class LeadSearchItem(BaseModel):
     score: int = 0
     model_config = {"from_attributes": True}
 
-
     soft: str
     business: str
     short: str
-
 
