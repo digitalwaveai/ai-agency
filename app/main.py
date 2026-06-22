@@ -78,7 +78,12 @@ async def search(req: SearchRequest, db: Session = Depends(get_db)):
         assign_lead_code(db, lead)
         saved.append(lead)
 
-    return saved
+    unique_leads = {}
+
+    for lead in saved:
+        unique_leads[lead.id] = lead
+
+    return list(unique_leads.values())
 
 
 @app.get("/leads", response_model=list[LeadRead])
