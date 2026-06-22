@@ -1,4 +1,8 @@
+
 from sqlalchemy import create_engine, text
+
+from sqlalchemy import create_engine
+
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
 
@@ -10,6 +14,7 @@ def _connect_args(url: str) -> dict:
 
 engine = create_engine(get_settings().database_url, connect_args=_connect_args(get_settings().database_url))
 SessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
+
 _initialized = False
 
 def format_lead_code(lead_id: int) -> str:
@@ -51,13 +56,31 @@ def init_db() -> None:
     from . import models  # noqa: F401 - registers SQLAlchemy models on metadata
     Base.metadata.create_all(bind=engine)
     ensure_lead_code_column()
+
+_initialized = False
+
+def init_db() -> None:
+    """Import models and create database tables if they do not exist yet."""
+    global _initialized
+    from . import models  # noqa: F401 - registers SQLAlchemy models on metadata
+    Base.metadata.create_all(bind=engine)
+
     _initialized = True
 
 def get_db():
     if not _initialized:
         init_db()
+
+def get_db():
+
+
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
+
+def init_db():
+    from . import models
+    Base.metadata.create_all(bind=engine)
+
