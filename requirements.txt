@@ -11,11 +11,7 @@ pytest==8.3.4
 
 discord.py==2.4.0
 
-
 discord.py==2.4.0
-
-discord.py==2.4.0
-
 
 
 

@@ -6,11 +6,7 @@ def leads_to_csv(leads: list[Lead]) -> str:
 
     fields = ["id","lead_code","name","niche","city","country","website_url","instagram_url","telegram_url","email","phone","whatsapp","score","status","source_url","notes"]
 
-
-    fields = ["id","lead_code","name","niche","city","country","website_url","instagram_url","telegram_url","email","phone","whatsapp","score","status","source_url","notes"]
-
     fields = ["id","name","niche","city","country","website_url","instagram_url","telegram_url","email","phone","whatsapp","score","status","source_url","notes"]
-
 
     writer = csv.DictWriter(output, fieldnames=fields)
     writer.writeheader()
