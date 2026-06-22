@@ -15,6 +15,9 @@ class SearchRequest(BaseModel):
 
 class LeadBase(BaseModel):
     name: str
+
+    lead_code: str | None = None
+
     niche: str | None = None
     city: str | None = None
     country: str | None = None
@@ -51,6 +54,25 @@ class LeadUpdate(BaseModel):
     notes: str | None = None
 
 class OutreachResponse(BaseModel):
+
+    premium: str
     soft: str
     business: str
     short: str
+    follow_up: str
+    specific_answer: str
+    recommended_service: str
+
+class LeadSearchItem(BaseModel):
+    id: int
+    lead_code: str | None = None
+    name: str
+    niche: str | None = None
+    city: str | None = None
+    score: int = 0
+    model_config = {"from_attributes": True}
+
+    soft: str
+    business: str
+    short: str
+
