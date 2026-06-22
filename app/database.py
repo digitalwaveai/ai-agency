@@ -1,7 +1,11 @@
 
 from sqlalchemy import create_engine, text
 
+
+from sqlalchemy import create_engine, text
+
 from sqlalchemy import create_engine
+
 
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 from .config import get_settings
@@ -65,6 +69,7 @@ def init_db() -> None:
     from . import models  # noqa: F401 - registers SQLAlchemy models on metadata
     Base.metadata.create_all(bind=engine)
 
+
     _initialized = True
 
 def get_db():
@@ -74,13 +79,16 @@ def get_db():
 def get_db():
 
 
+
     db = SessionLocal()
     try:
         yield db
     finally:
         db.close()
 
+
 def init_db():
     from . import models
     Base.metadata.create_all(bind=engine)
+
 

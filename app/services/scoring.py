@@ -13,7 +13,12 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     has_contact = any([lead.email, lead.phone, lead.telegram_url, lead.whatsapp and lead.whatsapp != "не найден"])
     if has_contact: score += 15; reasons.append("есть контакт +15")
 
+
+    has_contact = any([lead.email, lead.phone, lead.telegram_url, lead.whatsapp and lead.whatsapp != "не найден"])
+    if has_contact: score += 15; reasons.append("есть контакт +15")
+
     if any([lead.email, lead.phone, lead.whatsapp, lead.telegram_url]): score += 15; reasons.append("есть контакт +15")
+
 
 
     else: score -= 20; reasons.append("контакт не найден -20")

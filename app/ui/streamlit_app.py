@@ -5,7 +5,6 @@ API = st.sidebar.text_input("API URL", "http://localhost:8000")
 st.title("Beauty Lead Finder Assistant")
 
 
-
 def api_request(method: str, path: str, **kwargs):
     try:
         response = requests.request(method, f"{API}{path}", timeout=kwargs.pop("timeout", 30), **kwargs)
@@ -15,9 +14,6 @@ def api_request(method: str, path: str, **kwargs):
     except Exception as exc:
         st.warning(f"Backend недоступен или вернул ошибку: {exc}")
         return None
-
-
-
 
 
 with st.form("search"):
@@ -30,8 +26,6 @@ with st.form("search"):
     contacts_only = st.checkbox("Только с контактами")
     exclude = st.text_input("Кого исключать", "крупные сети франшизы агентства")
     if st.form_submit_button("Найти / обновить список"):
-
-
 
         payload = {"niche": niche, "city": city, "country": country, "services": services, "limit": limit, "min_score": min_score, "contacts_only": contacts_only, "exclude": exclude, "target_type": "частные эксперты", "language": "ru"}
         result = api_request("POST", "/search", json=payload, timeout=60)
@@ -54,6 +48,7 @@ if st.button("Сгенерировать сообщение"):
         st.json(result)
 
 
+
         r = requests.post(f"{API}/search", json=locals() | {"target_type":"частные эксперты", "language":"ru"}, timeout=60)
         st.write(r.json())
 
@@ -69,10 +64,13 @@ if st.button("Сгенерировать сообщение"):
     st.json(requests.post(f"{API}/leads/{lead_id}/outreach").json())
 
 
+
 with st.form("update"):
     status = st.selectbox("Новый статус", ["new", "qualified", "contacted", "replied", "not_fit", "do_not_contact", "archived"])
     notes = st.text_area("Заметки")
     if st.form_submit_button("Сохранить статус/заметки"):
+
+
 
 
 
@@ -82,7 +80,10 @@ with st.form("update"):
 csv_data = api_request("GET", "/export.csv") or ""
 st.download_button("Экспорт CSV", data=csv_data, file_name="leads.csv")
 
+
+
         st.json(requests.patch(f"{API}/leads/{lead_id}", json={"status":status,"notes":notes}).json())
 st.download_button("Экспорт CSV", data=requests.get(f"{API}/export.csv").text, file_name="leads.csv")
+
 
 

@@ -1,5 +1,8 @@
 import io
 import os
+
+from pathlib import Path
+
 from typing import Any
 
 import discord
@@ -8,6 +11,19 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+APP_DIR = Path(__file__).resolve().parent
+PROMPTS_DIR = APP_DIR / "prompts"
+DEFAULT_MESSAGE_PROMPT = "Сгенерируй короткий персонализированный оффер без выдумывания отсутствующих фактов."
+
+def load_optional_prompt(filename: str, fallback: str = DEFAULT_MESSAGE_PROMPT) -> str:
+    """Load optional prompt files relative to this source file without depending on cwd."""
+    try:
+        return (PROMPTS_DIR / filename).read_text(encoding="utf-8").strip() or fallback
+    except FileNotFoundError:
+        return fallback
+
 
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
@@ -39,10 +55,16 @@ def parse_allowed_user_ids(raw: str | None) -> set[int]:
 
         if value and value.isdigit():
             allowed.add(int(value))
+    return allowed
+
+
+        if value and value.isdigit():
+            allowed.add(int(value))
 
         if value:
             if value.isdigit():
                 allowed.add(int(value))
+
 
 
 
@@ -69,9 +91,13 @@ async def api_request(method: str, path: str, **kwargs: Any) -> httpx.Response |
 
     except (httpx.ConnectError, httpx.ConnectTimeout):
 
+
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+
     except httpx.ConnectError:
         return None
     except httpx.ConnectTimeout:
+
 
         return None
     except httpx.ReadTimeout:
@@ -80,6 +106,11 @@ async def api_request(method: str, path: str, **kwargs: Any) -> httpx.Response |
 
         if exc.response.status_code == 404:
             raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
+
+
+        if exc.response.status_code == 404:
+            raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
+
 
         detail = exc.response.text[:500]
         raise RuntimeError(f"Backend вернул ошибку {exc.response.status_code}: {detail}") from exc
@@ -99,8 +130,10 @@ def lead_public_id(lead: dict[str, Any]) -> str:
 def lead_contact(lead: dict[str, Any]) -> str:
     for key in ["website_url", "telegram_url", "instagram_url", "email", "phone", "whatsapp", "tiktok_url", "vk_url", "youtube_url"]:
 
+
 def lead_contact(lead: dict[str, Any]) -> str:
     for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
+
 
         value = lead.get(key)
         if value and value != "не найден":
@@ -111,6 +144,8 @@ def lead_contact(lead: dict[str, Any]) -> str:
 def truncate(value: Any, limit: int = 900) -> str:
     text = str(value or "не найден")
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
 
 
 
@@ -204,6 +239,11 @@ def offer_text(lead: dict[str, Any], offer: dict[str, str], mode: str = "default
         f"**6. Ответ на “Что конкретно вы предлагаете?”:**\n{truncate(offer.get('specific_answer'), 650)}"
     )
 
+
+
+def lead_embed(lead: dict[str, Any]) -> discord.Embed:
+    embed = discord.Embed(
+
 def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
     if not leads:
         return "Лиды не найдены."
@@ -222,6 +262,7 @@ def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
 def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     embed = discord.Embed(
 
+
         title=compact_lead_label(lead),
         description=truncate(lead.get("description"), 900),
         color=discord.Color.purple(),
@@ -232,6 +273,7 @@ def lead_embed(lead: dict[str, Any]) -> discord.Embed:
         color=discord.Color.purple(),
     )
     embed.add_field(name="Ниша / город", value=f"{lead.get('niche') or 'не найден'} / {lead.get('city') or 'не найден'}", inline=False)
+
 
     embed.add_field(name="Score", value=f"{lead.get('score', 0)} — {truncate(lead.get('score_reason'), 500)}", inline=False)
     embed.add_field(name="Контакт", value=truncate(lead_contact(lead), 500), inline=False)
@@ -574,6 +616,7 @@ async def status(interaction: discord.Interaction, lead: str, status: str, notes
     await interaction.followup.send(
         f"Статус лида `{lead_public_id(updated)}` обновлён: **{updated.get('status')}**",
 
+
 async def lead(interaction: discord.Interaction, lead_id: int) -> None:
     if not await ensure_allowed(interaction):
         return
@@ -615,6 +658,7 @@ async def status(interaction: discord.Interaction, lead_id: int, status: str, no
     lead_data = response.json()
     await interaction.followup.send(
         f"Статус лида `#{lead_id}` обновлён: **{lead_data.get('status')}**",
+
 
         ephemeral=True,
     )
