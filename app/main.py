@@ -45,28 +45,41 @@ def queries(req: SearchRequest):
 async def search(req: SearchRequest, db: Session = Depends(get_db)):
     results = await SearchService().search(req)
     saved = []
+
     for result in results:
         lead_in = result_to_lead(result, req)
         lead_in.score, lead_in.score_reason = score_lead(lead_in, req)
-        if lead_in.score < req.min_score: continue
-        if req.contacts_only and not any([lead_in.email, lead_in.phone, lead_in.telegram_url, lead_in.whatsapp and lead_in.whatsapp != "не найден"]): continue
-        dup = find_duplicate(db, lead_in)
-        if dup:
 
-            assign_lead_code(db, dup)
-            saved.append(dup); continue
+        if lead_in.score < req.min_score:
+            continue
+
+        has_contact = any([
+            lead_in.email,
+            lead_in.phone,
+            lead_in.telegram_url,
+            lead_in.whatsapp
+            and lead_in.whatsapp != "\u043d\u0435 \u043d\u0430\u0439\u0434\u0435\u043d",
+        ])
+
+        if req.contacts_only and not has_contact:
+            continue
+
+        duplicate = find_duplicate(db, lead_in)
+
+        if duplicate:
+            assign_lead_code(db, duplicate)
+            saved.append(duplicate)
+            continue
+
         lead = Lead(**lead_in.model_dump())
-        db.add(lead); db.commit(); db.refresh(lead)
+        db.add(lead)
+        db.commit()
+        db.refresh(lead)
         assign_lead_code(db, lead)
-
-
-            saved.append(dup); continue
-        lead = Lead(**lead_in.model_dump())
-        db.add(lead); db.commit(); db.refresh(lead)
-
-
         saved.append(lead)
+
     return saved
+
 
 @app.get("/leads", response_model=list[LeadRead])
 def list_leads(niche: str | None = None, city: str | None = None, min_score: int = 0, status: str | None = None, db: Session = Depends(get_db)):
