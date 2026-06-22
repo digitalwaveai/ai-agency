@@ -1,10 +1,21 @@
 from fastapi import Depends, FastAPI, HTTPException, Response
 from fastapi.responses import HTMLResponse
+
+
+
 from sqlalchemy import case, or_
 from sqlalchemy.orm import Session
 from app.database import assign_lead_code, get_db, init_db
 from app.models import Lead
 from app.schemas import LeadRead, LeadSearchItem, LeadUpdate, SearchRequest, OutreachResponse
+
+
+from sqlalchemy.orm import Session
+from app.database import get_db, init_db
+from app.models import Lead
+from app.schemas import LeadRead, LeadUpdate, SearchRequest, OutreachResponse
+
+
 from app.services.search_service import SearchService, generate_queries
 from app.services.lead_enrichment import result_to_lead
 from app.services.scoring import score_lead
@@ -41,11 +52,19 @@ async def search(req: SearchRequest, db: Session = Depends(get_db)):
         if req.contacts_only and not any([lead_in.email, lead_in.phone, lead_in.telegram_url, lead_in.whatsapp and lead_in.whatsapp != "не найден"]): continue
         dup = find_duplicate(db, lead_in)
         if dup:
+
             assign_lead_code(db, dup)
             saved.append(dup); continue
         lead = Lead(**lead_in.model_dump())
         db.add(lead); db.commit(); db.refresh(lead)
         assign_lead_code(db, lead)
+
+
+            saved.append(dup); continue
+        lead = Lead(**lead_in.model_dump())
+        db.add(lead); db.commit(); db.refresh(lead)
+
+
         saved.append(lead)
     return saved
 
@@ -56,6 +75,9 @@ def list_leads(niche: str | None = None, city: str | None = None, min_score: int
     if city: q = q.filter(Lead.city.ilike(f"%{city}%"))
     if status: q = q.filter(Lead.status == status)
     return q.order_by(Lead.score.desc(), Lead.last_updated_at.desc()).all()
+
+
+
 
 
 @app.get("/leads/search", response_model=list[LeadSearchItem])
@@ -92,6 +114,9 @@ def outreach_by_code(lead_code: str, service: str = "auto", db: Session = Depend
         raise HTTPException(404, "Lead not found")
     return generate_outreach(lead, service=service)
 
+
+
+
 @app.get("/leads/{lead_id}", response_model=LeadRead)
 def get_lead(lead_id: int, db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
@@ -106,11 +131,22 @@ def update_lead(lead_id: int, payload: LeadUpdate, db: Session = Depends(get_db)
     db.commit(); db.refresh(lead); return lead
 
 @app.post("/leads/{lead_id}/outreach", response_model=OutreachResponse)
+
+
+
 def outreach(lead_id: int, service: str = "auto", db: Session = Depends(get_db)):
     lead = db.get(Lead, lead_id)
     if not lead: raise HTTPException(404, "Lead not found")
     assign_lead_code(db, lead)
     return generate_outreach(lead, service=service)
+
+
+def outreach(lead_id: int, db: Session = Depends(get_db)):
+    lead = db.get(Lead, lead_id)
+    if not lead: raise HTTPException(404, "Lead not found")
+    return generate_outreach(lead)
+
+
 
 @app.get("/export.csv")
 def export_csv(db: Session = Depends(get_db)):

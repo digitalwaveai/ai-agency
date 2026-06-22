@@ -1,6 +1,8 @@
 import io
 import os
+
 from pathlib import Path
+
 from typing import Any
 
 import discord
@@ -9,6 +11,7 @@ from discord import app_commands
 from dotenv import load_dotenv
 
 load_dotenv()
+
 
 APP_DIR = Path(__file__).resolve().parent
 PROMPTS_DIR = APP_DIR / "prompts"
@@ -21,11 +24,13 @@ def load_optional_prompt(filename: str, fallback: str = DEFAULT_MESSAGE_PROMPT) 
     except FileNotFoundError:
         return fallback
 
+
 API_URL = os.getenv("API_URL", "http://127.0.0.1:8000").rstrip("/")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
 HTTP_TIMEOUT_SECONDS = 120.0
 BACKEND_DOWN_MESSAGE = "Backend не запущен. Запустите python -m uvicorn app.main:app --reload"
+
 CARD_ERROR_MESSAGE = "Не удалось получить карточку лида. Проверьте работу backend."
 LEAD_NOT_FOUND_MESSAGE = "Лид не найден. Обновите список и выберите другого."
 
@@ -47,9 +52,20 @@ def parse_allowed_user_ids(raw: str | None) -> set[int]:
     allowed: set[int] = set()
     for item in raw.replace(";", ",").split(","):
         value = item.strip()
+
         if value and value.isdigit():
             allowed.add(int(value))
     return allowed
+
+
+        if value and value.isdigit():
+            allowed.add(int(value))
+
+        if value:
+            if value.isdigit():
+                allowed.add(int(value))
+
+
 
 
 ALLOWED_USER_IDS = parse_allowed_user_ids(os.getenv("DISCORD_ALLOWED_USER_IDS"))
@@ -72,13 +88,30 @@ async def api_request(method: str, path: str, **kwargs: Any) -> httpx.Response |
             response = await client.request(method, f"{API_URL}{path}", **kwargs)
             response.raise_for_status()
             return response
+
     except (httpx.ConnectError, httpx.ConnectTimeout):
+
+
+    except (httpx.ConnectError, httpx.ConnectTimeout):
+
+    except httpx.ConnectError:
+        return None
+    except httpx.ConnectTimeout:
+
+
         return None
     except httpx.ReadTimeout:
         raise TimeoutError("Backend отвечает слишком долго. Попробуйте уменьшить limit или повторить позже.")
     except httpx.HTTPStatusError as exc:
+
         if exc.response.status_code == 404:
             raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
+
+
+        if exc.response.status_code == 404:
+            raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
+
+
         detail = exc.response.text[:500]
         raise RuntimeError(f"Backend вернул ошибку {exc.response.status_code}: {detail}") from exc
     except httpx.HTTPError as exc:
@@ -89,12 +122,19 @@ def split_services(services: str) -> list[str]:
     return [part.strip() for part in services.split(",") if part.strip()]
 
 
+
 def lead_public_id(lead: dict[str, Any]) -> str:
     return lead.get("lead_code") or f"#{lead.get('id')}"
 
 
 def lead_contact(lead: dict[str, Any]) -> str:
     for key in ["website_url", "telegram_url", "instagram_url", "email", "phone", "whatsapp", "tiktok_url", "vk_url", "youtube_url"]:
+
+
+def lead_contact(lead: dict[str, Any]) -> str:
+    for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
+
+
         value = lead.get(key)
         if value and value != "не найден":
             return str(value)
@@ -104,6 +144,9 @@ def lead_contact(lead: dict[str, Any]) -> str:
 def truncate(value: Any, limit: int = 900) -> str:
     text = str(value or "не найден")
     return text if len(text) <= limit else text[: limit - 1] + "…"
+
+
+
 
 
 def compact_lead_label(lead: dict[str, Any]) -> str:
@@ -197,12 +240,41 @@ def offer_text(lead: dict[str, Any], offer: dict[str, str], mode: str = "default
     )
 
 
+
 def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     embed = discord.Embed(
+
+def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
+    if not leads:
+        return "Лиды не найдены."
+    lines = []
+    for lead in leads[:limit]:
+        lines.append(
+            f"`#{lead.get('id')}` **{truncate(lead.get('name'), 80)}** | "
+            f"{lead.get('niche') or 'ниша не найдена'} | {lead.get('city') or 'город не найден'} | "
+            f"score: {lead.get('score', 0)} | contact: {truncate(lead_contact(lead), 80)} | "
+            f"status: {lead.get('status') or 'new'}"
+        )
+    return "\n".join(lines)
+
+
+
+def lead_embed(lead: dict[str, Any]) -> discord.Embed:
+    embed = discord.Embed(
+
+
         title=compact_lead_label(lead),
         description=truncate(lead.get("description"), 900),
         color=discord.Color.purple(),
     )
+
+        title=f"#{lead.get('id')} — {truncate(lead.get('name'), 180)}",
+        description=truncate(lead.get("description"), 900),
+        color=discord.Color.purple(),
+    )
+    embed.add_field(name="Ниша / город", value=f"{lead.get('niche') or 'не найден'} / {lead.get('city') or 'не найден'}", inline=False)
+
+
     embed.add_field(name="Score", value=f"{lead.get('score', 0)} — {truncate(lead.get('score_reason'), 500)}", inline=False)
     embed.add_field(name="Контакт", value=truncate(lead_contact(lead), 500), inline=False)
     embed.add_field(name="Боль", value=truncate(lead.get("pain_points"), 500), inline=False)
@@ -212,6 +284,7 @@ def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     if lead.get("notes"):
         embed.add_field(name="Заметки", value=truncate(lead.get("notes"), 500), inline=False)
     return embed
+
 
 
 async def fetch_lead_candidates(query: str = "", limit: int = 25) -> list[dict[str, Any]]:
@@ -260,6 +333,7 @@ async def generate_offer_for_lead(lead: dict[str, Any], service: str = "auto") -
         return fallback_offer(lead, service=service)
 
 
+
 class BeautyLeadFinderBot(discord.Client):
     def __init__(self) -> None:
         intents = discord.Intents.default()
@@ -276,6 +350,7 @@ class BeautyLeadFinderBot(discord.Client):
 
 
 bot = BeautyLeadFinderBot()
+
 
 
 class OfferResultView(discord.ui.View):
@@ -401,6 +476,7 @@ async def lead_autocomplete(interaction: discord.Interaction, current: str) -> l
     ]
 
 
+
 @bot.tree.command(name="find_leads", description="Найти beauty-лидов через backend")
 @app_commands.describe(
     niche="Ниша: косметологи, бровисты, lash-мастера и т.д.",
@@ -480,6 +556,7 @@ async def leads(
 
 
 @bot.tree.command(name="lead", description="Показать подробную карточку лида")
+
 @app_commands.autocomplete(lead=lead_autocomplete)
 async def lead(interaction: discord.Interaction, lead: str) -> None:
     if not await ensure_allowed(interaction):
@@ -538,6 +615,51 @@ async def status(interaction: discord.Interaction, lead: str, status: str, notes
     updated = response.json()
     await interaction.followup.send(
         f"Статус лида `{lead_public_id(updated)}` обновлён: **{updated.get('status')}**",
+
+
+async def lead(interaction: discord.Interaction, lead_id: int) -> None:
+    if not await ensure_allowed(interaction):
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    response = await api_request("GET", f"/leads/{lead_id}")
+    if response is None:
+        await interaction.followup.send(BACKEND_DOWN_MESSAGE, ephemeral=True)
+        return
+    await interaction.followup.send(embed=lead_embed(response.json()), ephemeral=True)
+
+
+@bot.tree.command(name="message", description="Сгенерировать 3 варианта первого сообщения")
+async def message(interaction: discord.Interaction, lead_id: int) -> None:
+    if not await ensure_allowed(interaction):
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    response = await api_request("POST", f"/leads/{lead_id}/outreach")
+    if response is None:
+        await interaction.followup.send(BACKEND_DOWN_MESSAGE, ephemeral=True)
+        return
+    data = response.json()
+    text = (
+        f"**Мягкий:**\n{truncate(data.get('soft'), 900)}\n\n"
+        f"**Деловой:**\n{truncate(data.get('business'), 900)}\n\n"
+        f"**Короткий:**\n{truncate(data.get('short'), 500)}"
+    )
+    await interaction.followup.send(text, ephemeral=True)
+
+
+@bot.tree.command(name="status", description="Изменить статус и заметки лида")
+async def status(interaction: discord.Interaction, lead_id: int, status: str, notes: str | None = None) -> None:
+    if not await ensure_allowed(interaction):
+        return
+    await interaction.response.defer(ephemeral=True, thinking=True)
+    response = await api_request("PATCH", f"/leads/{lead_id}", json={"status": status, "notes": notes})
+    if response is None:
+        await interaction.followup.send(BACKEND_DOWN_MESSAGE, ephemeral=True)
+        return
+    lead_data = response.json()
+    await interaction.followup.send(
+        f"Статус лида `#{lead_id}` обновлён: **{lead_data.get('status')}**",
+
+
         ephemeral=True,
     )
 
