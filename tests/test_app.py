@@ -1,4 +1,3 @@
-
 import os
 
 os.environ.setdefault("DATABASE_URL", "sqlite://")
@@ -12,7 +11,6 @@ from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
 
 from app.database import Base, get_db
-
 from app.main import app
 from app.models import Lead
 from app.schemas import LeadCreate, SearchRequest
@@ -20,7 +18,7 @@ from app.services.deduplication import find_duplicate
 from app.services.export import leads_to_csv
 from app.services.scoring import score_lead
 from app.services.search_service import generate_queries
-
+from app.services.search_quality import assess_candidate_text
 
 engine = create_engine(
     "sqlite://",
@@ -75,25 +73,6 @@ def sample_lead(**kw):
     )
     data.update(kw)
     return LeadCreate(**data)
-
-
-
-engine = create_engine("sqlite:///:memory:", connect_args={"check_same_thread": False})
-TestingSessionLocal = sessionmaker(bind=engine, autoflush=False, autocommit=False)
-Base.metadata.create_all(bind=engine)
-
-def override_get_db():
-    db = TestingSessionLocal()
-    try: yield db
-    finally: db.close()
-app.dependency_overrides[get_db] = override_get_db
-client = TestClient(app)
-
-def sample_lead(**kw):
-    data = dict(name="Косметолог Анна", niche="косметолог", city="Москва", country="Россия", website_url="https://anna.example.com", instagram_url="https://instagram.com/anna", email="anna@example.com", phone="+79990000000", whatsapp="+79990000000", description="Косметолог Москва, запись через WhatsApp, сайта нет, консультации", pain_points="ручная запись, нет сайта", suggested_offer="сайт", source_url="https://example.com/anna", source_type="demo")
-    data.update(kw); return LeadCreate(**data)
-
-
 
 
 def test_generate_queries():
@@ -154,158 +133,49 @@ def test_outreach_generation():
 
 
 
-def test_new_lead_gets_unique_lead_code():
-    db = TestingSessionLocal()
-    lead_one = Lead(**sample_lead(name="Лид 1", email="one@example.com", source_url="https://example.com/one").model_dump())
-    lead_two = Lead(**sample_lead(name="Лид 2", email="two@example.com", source_url="https://example.com/two").model_dump())
-    db.add_all([lead_one, lead_two])
-    db.commit()
-    db.refresh(lead_one); db.refresh(lead_two)
-
-    assign_lead_code(db, lead_one)
-    assign_lead_code(db, lead_two)
-
-    assert lead_one.lead_code == f"BLF-{lead_one.id:06d}"
-    assert lead_two.lead_code == f"BLF-{lead_two.id:06d}"
-    assert lead_one.lead_code != lead_two.lead_code
-    db.close()
+def test_queries_do_not_use_offered_services_as_search_need():
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["дорогой корпоративный сайт"],
+    )
+    queries = generate_queries(request)
+    assert all("дорогой корпоративный сайт" not in query for query in queries)
 
 
-def test_updating_lead_does_not_change_lead_code():
-    db = TestingSessionLocal()
-    lead = Lead(**sample_lead(score=40).model_dump())
-    db.add(lead); db.commit(); db.refresh(lead)
-    assign_lead_code(db, lead)
-    original_code = lead.lead_code
-
-    lead.score = 99
-    lead.notes = "updated"
-    db.add(lead); db.commit(); db.refresh(lead)
-    assign_lead_code(db, lead)
-
-    assert lead.lead_code == original_code
-    assert lead.score == 99
-    db.close()
+def test_quality_rejects_chain():
+    decision = assess_candidate_text(
+        title='Центр косметологии — сеть салонов "Зеркала красоты"',
+        snippet="Федеральная сеть, 18 филиалов в Москве",
+        url="https://zerkalastudio.ru/cosmetology",
+        niche="косметолог",
+        city="Москва",
+        exclude="крупные сети, франшизы",
+        require_city=True,
+    )
+    assert decision.accepted is False
 
 
-def test_existing_leads_get_code_without_losing_data():
-    db = TestingSessionLocal()
-    lead = Lead(**sample_lead(name="Существующий лид", score=77).model_dump())
-    lead.lead_code = None
-    db.add(lead); db.commit(); db.refresh(lead)
-
-    assign_missing_lead_codes(db)
-    db.refresh(lead)
-
-    assert lead.lead_code == f"BLF-{lead.id:06d}"
-    assert lead.name == "Существующий лид"
-    assert lead.score == 77
-    db.close()
+def test_quality_rejects_directory():
+    decision = assess_candidate_text(
+        title="Лучшие косметологи Москвы — рейтинг и отзывы",
+        snippet="Каталог специалистов, цены и отзывы клиентов",
+        url="https://zoon.ru/msk/beauty/cosmetology/",
+        niche="косметолог",
+        city="Москва",
+        require_city=True,
+    )
+    assert decision.accepted is False
 
 
-def test_search_by_lead_code_returns_right_lead():
-    client.post("/search", json={"niche": "косметолог", "city": "Москва", "limit": 1})
-    lead = client.get("/leads").json()[0]
-
-    response = client.get(f"/leads/by-code/{lead['lead_code']}")
-
-    assert response.status_code == 200
-    assert response.json()["id"] == lead["id"]
-
-
-def test_autocomplete_searches_by_code_name_niche_and_city():
-    client.post("/search", json={"niche": "косметолог", "city": "Москва", "limit": 1})
-    lead = client.get("/leads").json()[0]
-
-    by_code = client.get("/leads/search", params={"q": lead["lead_code"]}).json()
-    by_name = client.get("/leads/search", params={"q": lead["name"].split()[0]}).json()
-    by_niche = client.get("/leads/search", params={"q": "косметолог"}).json()
-    by_city = client.get("/leads/search", params={"q": "Москва"}).json()
-
-    assert by_code[0]["lead_code"] == lead["lead_code"]
-    assert by_name
-    assert by_niche
-    assert by_city
-
-
-def test_outreach_by_code_loads_data_from_database():
-    client.post("/search", json={"niche": "косметолог", "city": "Москва", "limit": 1})
-    lead = client.get("/leads").json()[0]
-
-    response = client.post(f"/leads/by-code/{lead['lead_code']}/outreach")
-
-    assert response.status_code == 200
-    data = response.json()
-    assert lead["name"] in data["premium"]
-    assert "recommended_service" in data
-    assert data["specific_answer"]
-
-
-def test_outreach_survives_missing_optional_fields():
-    db = TestingSessionLocal()
-    lead = Lead(**sample_lead(website_url=None, instagram_url=None, telegram_url=None, email=None, phone=None, whatsapp=None, pain_points=None, suggested_offer=None, score=15).model_dump())
-    db.add(lead); db.commit(); db.refresh(lead)
-    assign_lead_code(db, lead)
-    code = lead.lead_code
-    db.close()
-
-    response = client.post(f"/leads/by-code/{code}/outreach")
-
-    assert response.status_code == 200
-    assert response.json()["premium"]
-
-
-def test_discord_lead_format_deduplicates_leads():
-    from app.discord_bot import format_leads
-
-    lead = {"id": 1, "lead_code": "BLF-000001", "name": "Анна", "niche": "косметолог", "city": "Москва", "score": 80, "status": "new", "website_url": "https://example.com"}
-    text = format_leads([lead, lead], limit=10)
-
-    assert text.count("BLF-000001") == 1
-
-
-def test_discord_message_helpers_do_not_require_manual_client_fields():
-    from app.discord_bot import confirmation_text, fallback_offer
-
-    lead = {"id": 1, "lead_code": "BLF-000001", "name": "Анна", "niche": "косметолог", "city": "Москва", "website_url": None, "pain_points": "ручная запись"}
-
-    card = confirmation_text(lead)
-    offer = fallback_offer(lead)
-
-    assert "BLF-000001" in card
-    assert "Анна" in offer["premium"]
-    assert offer["recommended_service"] in {"website", "booking_automation", "audit"}
-
-
-def test_save_and_filter_lead():
-    payload = {"niche":"косметолог","city":"Москва","country":"Россия","services":["сайт"],"limit":2,"min_score":0,"contacts_only":False}
-    r = client.post("/search", json=payload)
-    assert r.status_code == 200
-    r = client.get("/leads", params={"city":"Москва", "min_score": 1})
-    assert r.status_code == 200
-    assert isinstance(r.json(), list)
-
-def test_deduplication_by_email():
-    db = TestingSessionLocal()
-    lead = Lead(**sample_lead(email="dup@example.com").model_dump(), score=90)
-    db.add(lead); db.commit()
-    assert find_duplicate(db, sample_lead(email="dup@example.com")) is not None
-    db.close()
-
-def test_export_csv():
-    db = TestingSessionLocal()
-    csv_text = leads_to_csv(db.query(Lead).all())
-    assert "name" in csv_text and "source_url" in csv_text
-
-def test_outreach_generation():
-    r = client.get("/leads")
-    if not r.json():
-        client.post("/search", json={"niche":"косметолог","city":"Москва","limit":1})
-        r = client.get("/leads")
-    lead_id = r.json()[0]["id"]
-
-    msg = client.post(f"/leads/{lead_id}/outreach")
-    assert msg.status_code == 200
-    assert {"soft", "business", "short"}.issubset(msg.json())
-
-
+def test_quality_accepts_private_specialist():
+    decision = assess_candidate_text(
+        title="Частный косметолог Анна в Москве",
+        snippet="Принимаю в кабинете. Чистки, пилинги. Запись через WhatsApp.",
+        url="https://vk.com/cosmetolog_anna_msk",
+        niche="косметолог",
+        city="Москва",
+        require_city=True,
+    )
+    assert decision.accepted is True
+    assert decision.score >= 70

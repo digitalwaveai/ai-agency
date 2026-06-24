@@ -22,16 +22,11 @@ def parse_allowed_user_ids(raw: str | None) -> set[int]:
     allowed: set[int] = set()
     for item in raw.replace(";", ",").split(","):
         value = item.strip()
-
-
-        if value and value.isdigit():
-            allowed.add(int(value))
-
-
         if value:
             if value.isdigit():
                 allowed.add(int(value))
     return allowed
+
 
 ALLOWED_USER_IDS = parse_allowed_user_ids(os.getenv("DISCORD_ALLOWED_USER_IDS"))
 
@@ -53,29 +48,13 @@ async def api_request(method: str, path: str, **kwargs: Any) -> httpx.Response |
             response = await client.request(method, f"{API_URL}{path}", **kwargs)
             response.raise_for_status()
             return response
-
     except httpx.ConnectError:
         return None
     except httpx.ConnectTimeout:
-
-
-    except (httpx.ConnectError, httpx.ConnectTimeout):
-
-    except httpx.ConnectError:
-        return None
-    except httpx.ConnectTimeout:
-
-
         return None
     except httpx.ReadTimeout:
         raise TimeoutError("Backend отвечает слишком долго. Попробуйте уменьшить limit или повторить позже.")
     except httpx.HTTPStatusError as exc:
-
-
-        if exc.response.status_code == 404:
-            raise LookupError(LEAD_NOT_FOUND_MESSAGE) from exc
-
-
         detail = exc.response.text[:500]
         raise RuntimeError(f"Backend вернул ошибку {exc.response.status_code}: {detail}") from exc
     except httpx.HTTPError as exc:
@@ -86,22 +65,8 @@ def split_services(services: str) -> list[str]:
     return [part.strip() for part in services.split(",") if part.strip()]
 
 
-
 def lead_contact(lead: dict[str, Any]) -> str:
-    for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
-
-
-def lead_public_id(lead: dict[str, Any]) -> str:
-    return lead.get("lead_code") or f"#{lead.get('id')}"
-
-
-def lead_contact(lead: dict[str, Any]) -> str:
-    for key in ["website_url", "telegram_url", "instagram_url", "email", "phone", "whatsapp", "tiktok_url", "vk_url", "youtube_url"]:
-
-def lead_contact(lead: dict[str, Any]) -> str:
-    for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "website_url"]:
-
-
+    for key in ["email", "phone", "whatsapp", "telegram_url", "instagram_url", "vk_url", "website_url"]:
         value = lead.get(key)
         if value and value != "не найден":
             return str(value)
@@ -111,99 +76,6 @@ def lead_contact(lead: dict[str, Any]) -> str:
 def truncate(value: Any, limit: int = 900) -> str:
     text = str(value or "не найден")
     return text if len(text) <= limit else text[: limit - 1] + "…"
-
-
-
-
-def compact_lead_label(lead: dict[str, Any]) -> str:
-    return f"{lead_public_id(lead)} — {lead.get('name') or 'не найден'} — {lead.get('niche') or 'ниша не найдена'} — {lead.get('city') or 'город не найден'}"
-
-
-def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
-    if not leads:
-        return "Лиды не найдены."
-    seen: set[str] = set()
-    blocks = []
-    for lead in leads:
-        key = str(lead.get("lead_code") or lead.get("id"))
-        if key in seen:
-            continue
-        seen.add(key)
-        blocks.append(
-            f"**{lead_public_id(lead)} | {truncate(lead.get('name'), 80)}**\n"
-            f"Ниша: {lead.get('niche') or 'не найдена'}\n"
-            f"Город: {lead.get('city') or 'не найден'}\n"
-            f"Оценка: {lead.get('score', 0)}\n"
-            f"Контакт: {truncate(lead_contact(lead), 120)}\n"
-            f"Статус: {lead.get('status') or 'new'}"
-        )
-        if len(blocks) >= limit:
-            break
-    return "\n\n".join(blocks) if blocks else "Лиды не найдены."
-
-
-def auto_service(lead: dict[str, Any]) -> str:
-    text = " ".join(str(lead.get(key) or "") for key in ["description", "pain_points", "score_reason", "suggested_offer", "notes"]).lower()
-    if not lead.get("website_url") or any(marker in text for marker in ["нет сайта", "сайта нет", "лендинг устарел", "сайт слаб"]):
-        return "website"
-    if any(marker in text for marker in ["direct", "whatsapp", "ручная запись", "запись через", "пишите"]):
-        return "booking_automation"
-    if any(marker in text for marker in ["слабая упаковка", "упаковк", "соцсет"]):
-        return "social_packaging"
-    if any(marker in text for marker in ["курс", "обуч", "школ", "консультац"]):
-        return "funnel"
-    return "audit"
-
-
-def confirmation_text(lead: dict[str, Any], service: str = "auto") -> str:
-    selected_service = auto_service(lead) if service == "auto" else service
-    return (
-        "Выбран лид:\n\n"
-        f"**{lead_public_id(lead)} — {lead.get('name') or 'не найден'}**\n"
-        f"Ниша: {lead.get('niche') or 'не найдена'}\n"
-        f"Город: {lead.get('city') or 'не найден'}\n"
-        f"Контакт: {lead_contact(lead)}\n"
-        f"Рекомендуемая услуга: {SERVICE_LABELS.get(selected_service, selected_service)}\n\n"
-        "Подготовить оффер?"
-    )
-
-
-def fallback_offer(lead: dict[str, Any], service: str = "auto") -> dict[str, str]:
-    selected_service = auto_service(lead) if service == "auto" else service
-    offer = SERVICE_LABELS.get(selected_service, SERVICE_LABELS["audit"])
-    name = lead.get("name") or "Здравствуйте"
-    niche = lead.get("niche") or "бьюти-услугами"
-    city = lead.get("city") or "вашем городе"
-    code = lead_public_id(lead)
-    return {
-        "recommended_service": selected_service,
-        "premium": f"Здравствуйте, {name}. Подготовил(а) идею для {code}: {offer} для направления {niche} в {city}. Могу показать короткую структуру решения и путь клиента до заявки.",
-        "soft": f"Здравствуйте, {name}. Кажется, для вашего формата может подойти {offer}. Могу прислать короткий пример без обязательств?",
-        "business": f"Здравствуйте, {name}. Предлагаю {offer} для {niche}: понятный путь клиента, заявка и первичная коммуникация без лишней ручной работы.",
-        "short": f"{name}, могу показать пример: {offer} для {niche} в {city}. Актуально?",
-        "follow_up": f"{name}, добрый день. Возвращаюсь к идее про {offer}. Могу накидать 2–3 улучшения для записи клиентов — прислать?",
-        "specific_answer": f"Конкретно предлагаю разобрать текущий путь клиента и собрать простой вариант «{offer}»: что клиент видит, куда нажимает и как оставляет заявку.",
-    }
-
-
-def offer_text(lead: dict[str, Any], offer: dict[str, str], mode: str = "default") -> str:
-    title = f"Оффер для {lead_public_id(lead)} — {lead.get('name') or 'не найден'}"
-    if mode == "shorter":
-        return f"**{title}**\n\n**Короткий вариант:**\n{truncate(offer.get('short'), 1200)}"
-    if mode == "softer":
-        return f"**{title}**\n\n**Мягкий вариант:**\n{truncate(offer.get('soft'), 1400)}\n\n**Повторное касание:**\n{truncate(offer.get('follow_up'), 700)}"
-    if mode == "specific":
-        return f"**{title}**\n\n**Что конкретно предлагается:**\n{truncate(offer.get('specific_answer'), 1500)}\n\n**Деловой вариант:**\n{truncate(offer.get('business'), 900)}"
-    return (
-        f"**{title}**\n"
-        f"Рекомендуемая услуга: **{SERVICE_LABELS.get(offer.get('recommended_service'), offer.get('recommended_service'))}**\n\n"
-        f"**1. Премиальный вариант:**\n{truncate(offer.get('premium'), 800)}\n\n"
-        f"**2. Мягкий вариант:**\n{truncate(offer.get('soft'), 700)}\n\n"
-        f"**3. Деловой вариант:**\n{truncate(offer.get('business'), 700)}\n\n"
-        f"**4. Короткий вариант:**\n{truncate(offer.get('short'), 350)}\n\n"
-        f"**5. Повторное касание через 2–3 дня:**\n{truncate(offer.get('follow_up'), 500)}\n\n"
-        f"**6. Ответ на “Что конкретно вы предлагаете?”:**\n{truncate(offer.get('specific_answer'), 650)}"
-    )
 
 
 def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
@@ -222,25 +94,26 @@ def format_leads(leads: list[dict[str, Any]], limit: int) -> str:
 
 def lead_embed(lead: dict[str, Any]) -> discord.Embed:
     embed = discord.Embed(
-
-
-        title=compact_lead_label(lead),
-        description=truncate(lead.get("description"), 900),
-        color=discord.Color.purple(),
-    )
-
-
         title=f"#{lead.get('id')} — {truncate(lead.get('name'), 180)}",
         description=truncate(lead.get("description"), 900),
         color=discord.Color.purple(),
     )
     embed.add_field(name="Ниша / город", value=f"{lead.get('niche') or 'не найден'} / {lead.get('city') or 'не найден'}", inline=False)
-
-
-
     embed.add_field(name="Score", value=f"{lead.get('score', 0)} — {truncate(lead.get('score_reason'), 500)}", inline=False)
     embed.add_field(name="Контакт", value=truncate(lead_contact(lead), 500), inline=False)
-    embed.add_field(name="Боль", value=truncate(lead.get("pain_points"), 500), inline=False)
+    pain_raw = str(lead.get("pain_points") or "не найден")
+    pain_text, separator, evidence = pain_raw.partition("\nПодтверждение:")
+    embed.add_field(
+        name="Боль",
+        value=truncate(pain_text.strip(), 500),
+        inline=False,
+    )
+    if separator and evidence.strip():
+        embed.add_field(
+            name="Подтверждение",
+            value=truncate(evidence.strip().strip("«» "), 500),
+            inline=False,
+        )
     embed.add_field(name="Оффер", value=truncate(lead.get("suggested_offer"), 500), inline=False)
     embed.add_field(name="Source", value=truncate(lead.get("source_url"), 500), inline=False)
     embed.add_field(name="Статус", value=lead.get("status") or "new", inline=True)
@@ -273,9 +146,11 @@ bot = BeautyLeadFinderBot()
     city="Город поиска",
     country="Страна",
     services="Услуги через запятую",
+    target_pain="Какую проблему искать у лида",
     limit="Сколько лидов найти",
     min_score="Минимальный score",
     contacts_only="Искать только с контактами",
+    strict_match="Жестко отбирать только подходящие лиды",
     exclude="Кого исключать",
 )
 async def find_leads(
@@ -284,10 +159,12 @@ async def find_leads(
     city: str,
     country: str = "Россия",
     services: str = "сайт, Telegram-бот",
+    target_pain: str = "нет сайта, прайс только в постах, запись через сообщения",
     limit: int = 5,
-    min_score: int = 0,
+    min_score: int = 60,
     contacts_only: bool = False,
-    exclude: str = "крупные сети франшизы агентства",
+    strict_match: bool = True,
+    exclude: str = "крупные сети, франшизы, агентства, каталоги, сайты отзывов, агрегаторы",
 ) -> None:
     if not await ensure_allowed(interaction):
         return
@@ -297,9 +174,11 @@ async def find_leads(
         "city": city,
         "country": country,
         "services": split_services(services),
+        "target_pain": target_pain,
         "limit": max(1, min(limit, 100)),
         "min_score": max(0, min(min_score, 100)),
         "contacts_only": contacts_only,
+        "strict_match": strict_match,
         "exclude": exclude,
         "language": "ru",
         "target_type": "частные эксперты",
@@ -346,68 +225,6 @@ async def leads(
 
 
 @bot.tree.command(name="lead", description="Показать подробную карточку лида")
-
-
-@app_commands.autocomplete(lead=lead_autocomplete)
-async def lead(interaction: discord.Interaction, lead: str) -> None:
-    if not await ensure_allowed(interaction):
-        return
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        lead_data = await resolve_lead(lead)
-    except LookupError:
-        await interaction.followup.send(LEAD_NOT_FOUND_MESSAGE, ephemeral=True)
-        return
-    except Exception:
-        await interaction.followup.send(CARD_ERROR_MESSAGE, ephemeral=True)
-        return
-    await interaction.followup.send(embed=lead_embed(lead_data), ephemeral=True)
-
-
-@bot.tree.command(name="message", description="Выбрать лида и подготовить персонализированный оффер")
-@app_commands.autocomplete(lead=lead_autocomplete)
-@app_commands.describe(lead="lead_code или имя лида", service="auto, website, telegram_bot, booking_automation, funnel, social_packaging, expert_launch, audit")
-async def message(interaction: discord.Interaction, lead: str | None = None, service: str = "auto") -> None:
-    if not await ensure_allowed(interaction):
-        return
-    if not lead:
-        await show_lead_picker(interaction, service=service)
-        return
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        lead_data = await resolve_lead(lead)
-    except LookupError:
-        await interaction.followup.send(LEAD_NOT_FOUND_MESSAGE, ephemeral=True)
-        return
-    except Exception:
-        await interaction.followup.send(CARD_ERROR_MESSAGE, ephemeral=True)
-        return
-    await interaction.followup.send(confirmation_text(lead_data, service), view=OfferConfirmView(lead_data, service), ephemeral=True)
-
-
-@bot.tree.command(name="status", description="Изменить статус и заметки лида")
-@app_commands.autocomplete(lead=lead_autocomplete)
-async def status(interaction: discord.Interaction, lead: str, status: str, notes: str | None = None) -> None:
-    if not await ensure_allowed(interaction):
-        return
-    await interaction.response.defer(ephemeral=True, thinking=True)
-    try:
-        lead_data = await resolve_lead(lead)
-        response = await api_request("PATCH", f"/leads/{lead_data['id']}", json={"status": status, "notes": notes})
-    except LookupError:
-        await interaction.followup.send(LEAD_NOT_FOUND_MESSAGE, ephemeral=True)
-        return
-    except Exception as exc:
-        await interaction.followup.send(f"Не удалось обновить статус: {exc}", ephemeral=True)
-        return
-    if response is None:
-        await interaction.followup.send(BACKEND_DOWN_MESSAGE, ephemeral=True)
-        return
-    updated = response.json()
-    await interaction.followup.send(
-        f"Статус лида `{lead_public_id(updated)}` обновлён: **{updated.get('status')}**",
-
-
 async def lead(interaction: discord.Interaction, lead_id: int) -> None:
     if not await ensure_allowed(interaction):
         return
@@ -449,7 +266,6 @@ async def status(interaction: discord.Interaction, lead_id: int, status: str, no
     lead_data = response.json()
     await interaction.followup.send(
         f"Статус лида `#{lead_id}` обновлён: **{lead_data.get('status')}**",
-
         ephemeral=True,
     )
 
