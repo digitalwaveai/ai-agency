@@ -1,4 +1,5 @@
 from dataclasses import asdict, dataclass
+import asyncio
 import re
 import httpx
 from app.config import get_settings
@@ -38,11 +39,76 @@ class SearchService:
             return DEMO_RESULTS[: req.limit]
         provider = self.settings.search_provider.lower()
         query = generate_queries(req)[0]
+        if provider == "ddgs":
+            return await self._ddgs(
+                query,
+                req.limit,
+                req.language,
+            )
         if provider == "brave" and self.settings.brave_search_api_key:
             return await self._brave(query, req.limit)
         if provider == "serpapi" and self.settings.serpapi_key:
             return await self._serpapi(query, req.limit)
         raise RuntimeError("No configured search provider. Use DEMO_MODE=true or set SEARCH_PROVIDER/API key.")
+
+    async def _ddgs(
+        self,
+        query: str,
+        limit: int,
+        language: str,
+    ) -> list[SearchResult]:
+        from ddgs import DDGS
+
+        region = (
+            "ru-ru"
+            if language.lower().startswith("ru")
+            else "us-en"
+        )
+
+        def run_search() -> list[dict[str, str]]:
+            return DDGS(timeout=20).text(
+                query,
+                region=region,
+                safesearch="moderate",
+                max_results=limit,
+                backend="auto",
+            )
+
+        raw_results = await asyncio.to_thread(run_search)
+
+        results: list[SearchResult] = []
+        seen_urls: set[str] = set()
+
+        for item in raw_results:
+            url = str(
+                item.get("href")
+                or item.get("url")
+                or ""
+            ).strip()
+
+            if not url or url in seen_urls:
+                continue
+
+            seen_urls.add(url)
+
+            results.append(
+                SearchResult(
+                    title=str(item.get("title") or ""),
+                    url=url,
+                    snippet=str(
+                        item.get("body")
+                        or item.get("snippet")
+                        or ""
+                    ),
+                    source_type="ddgs",
+                )
+            )
+
+            if len(results) >= limit:
+                break
+
+        return results
+
 
     async def _brave(self, query: str, limit: int) -> list[SearchResult]:
         headers = {"X-Subscription-Token": self.settings.brave_search_api_key or ""}
