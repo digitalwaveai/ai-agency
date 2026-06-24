@@ -337,3 +337,127 @@ def test_scoring_named_private_specialist_can_be_high():
     )
     score, _ = score_lead(lead, request)
     assert score >= 85
+
+
+def test_quality_rejects_pinterest_publication():
+    decision = assess_candidate_text(
+        title="Коррекция носогубной складки | До и после",
+        snippet="ОЛЬГА | КОСМЕТОЛОГ | МОСКВА",
+        url="https://www.pinterest.com/pin/907967974884840793/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_tgstat_mirror():
+    decision = assess_candidate_text(
+        title="COSMOTRADE",
+        snippet="Канал о косметологии в Москве",
+        url="https://tgstat.ru/en/channel/@cosmotrade_msk",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_livejournal_tag_page():
+    decision = assess_candidate_text(
+        title="Parfumerka, posts by tag: нишевая парфюмерия",
+        snippet="Публикации по тегу косметология и парфюмерия",
+        url="https://parfumerka.livejournal.com/tag/нишевая+парфюмерия",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_generic_seo_landing_is_review_only():
+    decision = assess_candidate_text(
+        title="Косметология для мужчин в Москве",
+        snippet="Контакты: info@kosmetolog-y-moskve.ru. Услуги косметолога.",
+        url="https://kosmetolog-y-moskve.ru/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is True
+    assert decision.score <= 45
+
+
+def test_generic_contact_page_is_review_only():
+    decision = assess_candidate_text(
+        title="Косметологический кабинет контакты",
+        snippet="Москва, телефон +7 977 379-90-37, услуги косметолога",
+        url="https://cosmetology-office.example.org/contacts",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is True
+    assert decision.score <= 45
+
+
+def test_target_pain_rejects_existing_online_booking():
+    decision = assess_candidate_text(
+        title="Косметолог Галина МАРС, Москва — онлайн-запись",
+        snippet="Записаться онлайн на процедуру косметолога",
+        url="https://my-kosmetolog.ru/booking",
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+    )
+    assert decision.accepted is False
+    assert "онлайн-запись" in decision.reasons[0]
+
+
+def test_named_lead_without_explicit_pain_cannot_score_100():
+    lead = sample_lead(
+        name="ТВОЙ КОСМЕТОЛОГ (@dr.beautysense)",
+        website_url=None,
+        instagram_url="https://www.instagram.com/dr.beautysense/",
+        email=None,
+        phone="+79774561757",
+        whatsapp=None,
+        description="Косметолог Москва. Услуги и консультации.",
+        pain_points="Выбранная боль не подтверждена",
+        suggested_offer="онлайн-запись, Telegram-бот",
+        source_url="https://www.instagram.com/dr.beautysense/",
+    )
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["онлайн-запись", "Telegram-бот"],
+        target_pain="запись через личные сообщения",
+        strict_match=False,
+    )
+    score, _ = score_lead(lead, request)
+    assert score < 100
+
+
+def test_social_post_source_becomes_profile_url():
+    from app.services.lead_enrichment import result_to_lead
+    from app.services.search_service import SearchResult
+
+    request = SearchRequest(niche="косметолог", city="Москва")
+    lead = result_to_lead(
+        SearchResult(
+            title="Анна — косметолог Москва",
+            url="https://vk.com/wall-123456_789",
+            snippet="Для записи пишите в комментарии или WhatsApp +79991112233",
+        ),
+        request,
+    )
+    assert lead.source_url == "https://vk.com/club123456"
+    assert lead.vk_url == "https://vk.com/club123456"
+
+
+def test_negated_online_booking_is_not_a_contradiction():
+    from app.services.search_quality import target_pain_contradiction_reason
+
+    assert target_pain_contradiction_reason(
+        "На проверенной странице не найдена явная онлайн-запись",
+        "нет онлайн-записи",
+    ) is None
+    assert target_pain_contradiction_reason(
+        "Онлайн-запись на странице не обнаружена",
+        "запись через личные сообщения",
+    ) is None

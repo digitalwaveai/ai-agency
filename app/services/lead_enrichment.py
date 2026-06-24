@@ -48,6 +48,7 @@ def result_to_lead(result: SearchResult, req: SearchRequest) -> LeadCreate:
     is_booking = is_host_in(host, BOOKING_HOSTS)
     is_placeholder = is_host_in(host, PLACEHOLDER_HOSTS)
     website_url = None if is_social or is_booking or is_placeholder else result.url
+    source_url = profile_url if is_social and profile_url else result.url
 
     return LeadCreate(
         name=identity.name or result.title[:255] or "не найден",
@@ -74,7 +75,7 @@ def result_to_lead(result: SearchResult, req: SearchRequest) -> LeadCreate:
         description=result.snippet,
         pain_points=detect_pain(text, req.target_pain),
         suggested_offer=", ".join(req.services) or None,
-        source_url=result.url,
+        source_url=source_url,
         source_type=result.source_type,
         score_reason=(
             f"предварительная оценка поиска: {result.quality_reason}"

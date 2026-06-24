@@ -42,6 +42,14 @@ CONTENT_HOSTS = {
     "dzen.ru",
     "vc.ru",
     "pikabu.ru",
+    "pinterest.com",
+    "pin.it",
+    "tgstat.ru",
+    "tgstat.com",
+    "telemetr.io",
+    "telemetr.me",
+    "livejournal.com",
+    "livejournal.ru",
 }
 
 SOCIAL_HOSTS = {
@@ -68,7 +76,8 @@ PLACEHOLDER_HOSTS = {
 
 BAD_PATH_RE = re.compile(
     r"(?:^|/)(?:reviews?|otzyvy?|отзывы?|rating|ratings|рейтинг|"
-    r"catalog|каталог|articles?|статьи?|blog|блог|news|новости|"
+    r"catalog|каталог|articles?|статьи?|blog|blogs|блог|news|новости|"
+    r"posts?|посты?|tags?|теги?|search|поиск|topics?|темы?|"
     r"vacanc(?:y|ies)|вакансии?|jobs?|работа)(?:/|$)",
     re.IGNORECASE,
 )
@@ -138,6 +147,43 @@ ARTICLE_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+GENERIC_LISTING_TITLE_RE = re.compile(
+    r"^\s*(?:"
+    r"специалисты?\s+косметологи?|"
+    r"врачи?[-\s]?косметологи?|"
+    r"косметологи"
+    r")\b.*\b(?:в\s+[а-яё-]+|цены?|запись|прием|контакты?)\b",
+    re.IGNORECASE,
+)
+
+SEO_GENERIC_TITLE_RE = re.compile(
+    r"^\s*(?:"
+    r"косметолог(?:ия|ический\s+кабинет)?|"
+    r"центр\s+(?:эстетической\s+)?косметологии|"
+    r"услуги\s+косметолога|врач[-\s]?косметолог|"
+    r"специалисты?\s+косметологи?"
+    r")\b.*\b(?:"
+    r"в\s+[а-яё-]+|контакты?|цены?|прайс|запись|онлайн|"
+    r"для\s+(?:мужчин|женщин)|адрес|рядом|прием|консультация"
+    r")\b",
+    re.IGNORECASE,
+)
+
+ONLINE_BOOKING_RE = re.compile(
+    r"(?:онлайн[-\s]?запис|запись\s+онлайн|записаться\s+онлайн|"
+    r"записаться\s+на\s+(?:при[её]м|процедур)|"
+    r"yclients|dikidi|altegio|alteg\.io|bookform|"
+    r"виджет\s+записи|личн\w*\s+кабинет|мобильн\w*\s+приложени\w*)",
+    re.IGNORECASE,
+)
+
+BOOKING_PAIN_RE = re.compile(
+    r"(?:нет\s+онлайн[-\s]?запис|без\s+онлайн[-\s]?запис|"
+    r"ручн\w*\s+запис|личн\w*\s+сообщ|директ|direct|"
+    r"комментари|запись\s+через\s+сообщ|через\s+(?:whatsapp|ватсап|telegram|телеграм|vk|вк))",
+    re.IGNORECASE,
+)
+
 SMALL_BUSINESS_RE = re.compile(
     r"\b(?:частн\w*|мастер|специалист|кабинет|студия|салон|"
     r"принимаю|веду\s+при[её]м|запись|процедур\w*|услуг\w*)\b",
@@ -159,10 +205,12 @@ ROLE_RE = re.compile(
 
 PERSON_AFTER_ROLE_RE = re.compile(
     rf"{ROLE_RE.pattern}\s+([А-ЯЁA-Z][а-яёa-z]{{2,}}(?:\s+[А-ЯЁA-Z][а-яёa-z]{{2,}}){{0,2}})",
+    re.IGNORECASE,
 )
 
 PERSON_BEFORE_ROLE_RE = re.compile(
     rf"([А-ЯЁA-Z][а-яёa-z]{{2,}}(?:\s+[А-ЯЁA-Z][а-яёa-z]{{2,}}){{0,2}})\s*[-—|:]\s*{ROLE_RE.pattern}",
+    re.IGNORECASE,
 )
 
 QUOTED_BRAND_RE = re.compile(r"[«\"']([^«»\"']{3,60})[»\"']")
@@ -259,6 +307,7 @@ class IdentityDecision:
     name: str
     reason: str
     generic: bool = False
+    max_score: int = 100
 
 
 def normalize_text(value: str | None) -> str:
@@ -543,21 +592,48 @@ def assess_identity(
 ) -> IdentityDecision:
     person_name = extract_person_name(title, city)
     if person_name:
-        return IdentityDecision(True, 25, person_name, "найдено имя специалиста", False)
+        return IdentityDecision(
+            True, 25, person_name, "найдено имя специалиста", False, 100
+        )
 
     quoted = QUOTED_BRAND_RE.search(title or "")
     if quoted:
         quoted_name = quoted.group(1).strip()
         if _distinctive_title_segment(quoted_name, niche, city):
-            return IdentityDecision(True, 20, quoted_name, "найдено название бизнеса", False)
+            return IdentityDecision(
+                True, 20, quoted_name, "найдено название бизнеса", False, 100
+            )
 
-    distinctive = _distinctive_title_segment(title, niche, city)
     profile_url = canonical_social_profile_url(url, f"{title} {snippet}")
     social_post = is_social_post_url(url)
     host = host_of(url)
+    title_handle = HANDLE_RE.search(title or "")
 
+    if title_handle:
+        return IdentityDecision(
+            True,
+            18,
+            title[:255],
+            "найден уникальный публичный профиль",
+            False,
+            90,
+        )
+
+    if SEO_GENERIC_TITLE_RE.search(normalize_text(title)):
+        return IdentityDecision(
+            True,
+            5,
+            title[:255],
+            "общая SEO-страница без подтвержденного имени",
+            True,
+            45,
+        )
+
+    distinctive = _distinctive_title_segment(title, niche, city)
     if distinctive:
-        return IdentityDecision(True, 15, distinctive, "найдено различимое название", False)
+        return IdentityDecision(
+            True, 15, distinctive, "найдено различимое название", False, 100
+        )
 
     if social_post:
         return IdentityDecision(
@@ -566,6 +642,7 @@ def assess_identity(
             "",
             "социальная публикация не содержит имени специалиста или названия бизнеса",
             True,
+            0,
         )
 
     handle = _social_handle_from_profile(profile_url)
@@ -576,6 +653,7 @@ def assess_identity(
             f"Профиль @{handle}",
             "есть уникальный профиль, но имя бизнеса не подтверждено",
             True,
+            60,
         )
 
     return IdentityDecision(
@@ -584,6 +662,7 @@ def assess_identity(
         "",
         "не найдено имя специалиста или различимое название бизнеса",
         True,
+        0,
     )
 
 
@@ -616,6 +695,46 @@ def enterprise_rejection_reason(text: str) -> str | None:
     support_signals = ENTERPRISE_SUPPORT_RE.findall(normalized)
     if len(support_signals) >= 2:
         return "набор признаков крупной организации"
+
+    return None
+
+
+def _positive_online_booking(text: str) -> bool:
+    normalized = normalize_text(text)
+
+    for match in ONLINE_BOOKING_RE.finditer(normalized):
+        prefix = normalized[max(0, match.start() - 48):match.start()]
+        suffix = normalized[match.end():match.end() + 36]
+
+        negated_before = re.search(
+            r"(?:нет|без|не\s+найден\w*|не\s+обнаружен\w*|"
+            r"отсутств\w*)(?:\s+[a-zа-я0-9-]+){0,4}\s*$",
+            prefix,
+            re.IGNORECASE,
+        )
+        negated_after = re.search(
+            r"(?:не\s+найден\w*|не\s+обнаружен\w*|отсутств\w*)",
+            suffix,
+            re.IGNORECASE,
+        )
+
+        if negated_before or negated_after:
+            continue
+
+        return True
+
+    return False
+
+
+def target_pain_contradiction_reason(
+    text: str,
+    target_pain: str = "",
+) -> str | None:
+    if not target_pain or not BOOKING_PAIN_RE.search(target_pain):
+        return None
+
+    if _positive_online_booking(text):
+        return "у лида уже есть онлайн-запись или готовая система бронирования"
 
     return None
 
@@ -661,6 +780,7 @@ def assess_candidate_text(
     city: str,
     exclude: str = "",
     require_city: bool = False,
+    target_pain: str = "",
 ) -> QualityDecision:
     combined = " ".join(part for part in (title, snippet, url) if part)
     normalized = normalize_text(combined)
@@ -669,8 +789,19 @@ def assess_candidate_text(
     if rejection:
         return QualityDecision(False, 0, (rejection,))
 
+    contradiction = target_pain_contradiction_reason(normalized, target_pain)
+    if contradiction:
+        return QualityDecision(False, 0, (contradiction,))
+
     if not text_matches_niche(normalized, niche):
         return QualityDecision(False, 0, ("не подтверждена запрошенная ниша",))
+
+    if GENERIC_LISTING_TITLE_RE.search(normalize_text(title)):
+        return QualityDecision(
+            False,
+            0,
+            ("общая страница списка специалистов без конкретного лида",),
+        )
 
     identity = assess_identity(
         title=title,
@@ -717,9 +848,11 @@ def assess_candidate_text(
         score += 5
         reasons.append("найден канонический профиль бизнеса +5")
 
-    if identity.generic:
-        score = min(score, 60)
-        reasons.append("профиль без подтвержденного имени: потолок 60")
+    if score > identity.max_score:
+        score = identity.max_score
+        reasons.append(
+            f"потолок {identity.max_score}: {identity.reason}"
+        )
 
     accepted = score >= 45 and (local_signal or action_signal or social_profile)
 
@@ -770,6 +903,7 @@ def rank_search_results(results, req: SearchRequest, max_results: int):
             city=req.city,
             exclude=req.exclude,
             require_city=False,
+            target_pain=req.target_pain,
         )
 
         if not decision.accepted:

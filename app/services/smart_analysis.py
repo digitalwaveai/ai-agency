@@ -19,6 +19,7 @@ from app.services.search_quality import (
     is_host_in,
     offer_is_relevant,
     pain_is_confirmed,
+    target_pain_contradiction_reason,
 )
 
 
@@ -299,9 +300,17 @@ async def _analyze_one(
         city=city,
         exclude=exclude,
         require_city=strict_match,
+        target_pain=target_pain,
     )
 
     if not decision.accepted:
+        return None
+
+    contradiction = target_pain_contradiction_reason(
+        analysis_text,
+        target_pain,
+    )
+    if contradiction:
         return None
 
     has_site = bool(website_url)

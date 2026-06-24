@@ -158,13 +158,16 @@ async def find_leads(
     niche: str,
     city: str,
     country: str = "Россия",
-    services: str = "сайт, Telegram-бот",
-    target_pain: str = "нет сайта, прайс только в постах, запись через сообщения",
+    services: str = "онлайн-запись, Telegram-бот",
+    target_pain: str = "запись через личные сообщения",
     limit: int = 5,
     min_score: int = 50,
     contacts_only: bool = False,
     strict_match: bool = False,
-    exclude: str = "крупные сети, франшизы, агентства, каталоги, сайты отзывов, агрегаторы",
+    exclude: str = (
+        "крупные сети, франшизы, филиалы, холдинги, агентства, "
+        "каталоги, сайты отзывов, агрегаторы, Pinterest, TGStat, LiveJournal"
+    ),
 ) -> None:
     if not await ensure_allowed(interaction):
         return

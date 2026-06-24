@@ -10,6 +10,7 @@ from app.services.search_quality import (
     offer_is_relevant,
     pain_is_confirmed,
     pain_is_explicit,
+    target_pain_contradiction_reason,
     text_matches_city,
     text_matches_niche,
 )
@@ -52,6 +53,13 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     enterprise = enterprise_rejection_reason(evidence_text)
     if enterprise:
         return 0, f"жесткий отказ: {enterprise}"
+
+    contradiction = target_pain_contradiction_reason(
+        evidence_text,
+        req.target_pain if req else "",
+    )
+    if contradiction:
+        return 0, f"жесткий отказ: {contradiction}"
 
     identity = assess_identity(
         title=lead.name,
@@ -134,8 +142,8 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
 
     caps: list[tuple[int, str]] = []
 
-    if identity.generic:
-        caps.append((60, "нет подтвержденного имени бизнеса"))
+    if identity.max_score < 100:
+        caps.append((identity.max_score, identity.reason))
 
     if not city_match:
         caps.append((55, "не подтвержден город"))
@@ -145,6 +153,15 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
 
     if req and req.target_pain and not explicit_pain:
         caps.append((70, "нет явного подтверждения целевой боли"))
+
+    if not (
+        identity.max_score == 100
+        and city_match
+        and has_direct_contact
+        and explicit_pain
+        and (not req or not req.services or offer_is_relevant(lead.suggested_offer))
+    ):
+        caps.append((95, "не выполнены все условия для score 100"))
 
     for maximum, reason in caps:
         if score > maximum:
