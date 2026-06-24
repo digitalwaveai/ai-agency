@@ -18,47 +18,50 @@ class SearchResult:
     source_type: str = "search"
     quality_score: int = 0
     quality_reason: str = ""
+    profile_url: str | None = None
 
 
 def _negative_terms() -> str:
     return (
-        "-вакансии -работа -курс -обучение -рейтинг "
-        "-отзывы -каталог -франшиза"
+        "-вакансии -работа -курс -обучение -рейтинг -отзывы "
+        "-каталог -франшиза -сеть -филиал -холдинг -агрегатор"
     )
 
 
 def generate_queries(req: SearchRequest) -> list[str]:
     niche = req.niche.strip()
     city = req.city.strip()
-    base = f"{niche} {city}".strip()
     negative = _negative_terms()
 
     queries = [
-        f"{base} частный мастер запись {negative}",
-        f"{base} кабинет услуги {negative}",
-        f"{base} запись WhatsApp {negative}",
-        f"site:vk.com {base} запись {negative}",
-        f"site:instagram.com {base} запись {negative}",
+        f"{niche} {city} частный мастер запись {negative}",
+        f'"частный {niche}" "{city}" запись {negative}',
+        f'"{niche}" "{city}" кабинет запись {negative}',
+        f'"{niche}" "{city}" "для записи пишите" {negative}',
+        f'"{niche}" "{city}" запись WhatsApp {negative}',
+        f'"врач-{niche}" "{city}" частный прием {negative}',
+        f'site:vk.com "{niche}" "{city}" запись {negative}',
+        f'site:instagram.com "{niche}" "{city}" запись {negative}',
     ]
 
     target = req.target_pain.lower()
 
     if any(word in target for word in ("прайс", "цен", "публикац", "пост")):
         queries.extend([
-            f"{base} прайс публикации {negative}",
-            f"site:vk.com {base} прайс {negative}",
+            f'"{niche}" "{city}" "прайс в постах" {negative}',
+            f'site:vk.com "{niche}" "{city}" прайс запись {negative}',
         ])
 
     if any(word in target for word in ("личн", "сообщ", "директ", "whatsapp", "телеграм")):
         queries.extend([
-            f'{niche} {city} "запись в личные сообщения" {negative}',
-            f'{niche} {city} "для записи пишите" {negative}',
+            f'"{niche}" "{city}" "запись в личные сообщения" {negative}',
+            f'"{niche}" "{city}" "запись через WhatsApp" {negative}',
         ])
 
     if any(word in target for word in ("нет сайта", "без сайта", "соцсет")):
         queries.extend([
-            f"site:vk.com {base} услуги {negative}",
-            f"site:t.me {base} запись {negative}",
+            f'site:vk.com "{niche}" "{city}" услуги запись {negative}',
+            f'site:t.me "{niche}" "{city}" запись {negative}',
         ])
 
     return list(dict.fromkeys(query.strip() for query in queries if query.strip()))
@@ -97,7 +100,7 @@ class SearchService:
         self.settings = get_settings()
 
     async def search(self, req: SearchRequest) -> list[SearchResult]:
-        candidate_pool = min(max(req.limit * 5, 20), 60)
+        candidate_pool = min(max(req.limit * 6, 24), 70)
 
         if self.settings.demo_mode or self.settings.search_provider == "demo":
             return rank_search_results(DEMO_RESULTS, req, candidate_pool)
@@ -108,7 +111,7 @@ class SearchService:
         if provider == "ddgs":
             raw_results = await self._search_ddgs_queries(
                 queries,
-                per_query=min(max(req.limit * 2, 8), 15),
+                per_query=min(max(req.limit * 2, 8), 14),
                 language=req.language,
             )
             return rank_search_results(raw_results, req, candidate_pool)
@@ -144,7 +147,7 @@ class SearchService:
                 except Exception:
                     return []
 
-        batches = await asyncio.gather(*(run(query) for query in queries[:8]))
+        batches = await asyncio.gather(*(run(query) for query in queries[:10]))
         combined: list[SearchResult] = []
         seen_urls: set[str] = set()
 

@@ -161,9 +161,9 @@ async def find_leads(
     services: str = "сайт, Telegram-бот",
     target_pain: str = "нет сайта, прайс только в постах, запись через сообщения",
     limit: int = 5,
-    min_score: int = 60,
+    min_score: int = 50,
     contacts_only: bool = False,
-    strict_match: bool = True,
+    strict_match: bool = False,
     exclude: str = "крупные сети, франшизы, агентства, каталоги, сайты отзывов, агрегаторы",
 ) -> None:
     if not await ensure_allowed(interaction):

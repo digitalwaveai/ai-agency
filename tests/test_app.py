@@ -179,3 +179,161 @@ def test_quality_accepts_private_specialist():
     )
     assert decision.accepted is True
     assert decision.score >= 70
+
+
+def test_quality_rejects_generic_vk_wall_post():
+    decision = assess_candidate_text(
+        title="КОСМЕТОЛОГ МОСКВА",
+        snippet="Услуги косметолога в Москве",
+        url="https://vk.com/wall-219849546_2690",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_generic_telegram_message():
+    decision = assess_candidate_text(
+        title="КОСМЕТОЛОГ МОСКВА (Контурная пластика)",
+        snippet="Косметолог Москва, контурная пластика",
+        url="https://t.me/makeupstav26/363",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_generic_specialist_listing():
+    decision = assess_candidate_text(
+        title="Специалисты косметологи в Москве",
+        snippet="Косметологи, цены и запись на прием",
+        url="https://clinic-example.ru/doctors/cosmetolog/",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_large_medical_brand():
+    decision = assess_candidate_text(
+        title="Косметолог в Москве — запись на консультацию в MEDSI BEAUTY",
+        snippet="Личный кабинет, мобильное приложение и сеть клиник",
+        url="https://medsi.ru/services/kosmetologiya/",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is False
+
+
+def test_quality_rejects_large_staff_count():
+    decision = assess_candidate_text(
+        title="СМ-Косметология в Москве",
+        snippet="8 клиник и более 70 специалистов. Онлайн-запись и мобильное приложение.",
+        url="https://sm-estetica.ru/",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is False
+
+
+def test_quality_accepts_named_social_post():
+    decision = assess_candidate_text(
+        title="Анна — косметолог Москва",
+        snippet="Для записи пишите в комментарии или WhatsApp +7 999 111-22-33",
+        url="https://vk.com/wall-123456_789",
+        niche="косметолог",
+        city="Москва",
+        require_city=False,
+    )
+    assert decision.accepted is True
+    assert decision.score >= 70
+
+
+def test_generic_instagram_profile_cannot_score_100():
+    from app.services.search_service import SearchResult
+    from app.services.search_quality import rank_search_results
+
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        limit=5,
+        strict_match=False,
+    )
+    results = rank_search_results(
+        [
+            SearchResult(
+                title="Косметолог | косметолог | Москва",
+                url="https://www.instagram.com/8karinaaaa/",
+                snippet="Услуги косметолога. Запись в директ.",
+            )
+        ],
+        request,
+        5,
+    )
+    assert len(results) == 1
+    assert results[0].quality_score <= 60
+
+
+def test_social_post_is_canonicalized_to_profile():
+    from app.services.search_quality import canonical_social_profile_url
+
+    assert canonical_social_profile_url(
+        "https://vk.com/wall-219849546_2690"
+    ) == "https://vk.com/club219849546"
+    assert canonical_social_profile_url(
+        "https://t.me/makeupstav26/363"
+    ) == "https://t.me/makeupstav26"
+
+
+def test_scoring_caps_profile_without_identity():
+    lead = sample_lead(
+        name="Профиль @8karinaaaa",
+        website_url=None,
+        instagram_url="https://www.instagram.com/8karinaaaa/",
+        email=None,
+        phone=None,
+        whatsapp=None,
+        description="Косметолог Москва. Услуги. Запись в директ.",
+        pain_points="Выбранная боль не подтверждена",
+        suggested_offer="онлайн-запись",
+        source_url="https://www.instagram.com/8karinaaaa/",
+    )
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["онлайн-запись"],
+        target_pain="запись через личные сообщения",
+        strict_match=False,
+    )
+    score, _ = score_lead(lead, request)
+    assert score <= 60
+
+
+def test_scoring_named_private_specialist_can_be_high():
+    lead = sample_lead(
+        name="Анна",
+        website_url=None,
+        instagram_url=None,
+        vk_url="https://vk.com/anna_cosmetolog",
+        email=None,
+        phone="+79991112233",
+        whatsapp="+79991112233",
+        description="Анна — частный косметолог в Москве. Для записи пишите в комментарии или WhatsApp.",
+        pain_points="Ручная запись через сообщения\nПодтверждение: «Для записи пишите в комментарии или WhatsApp»",
+        suggested_offer="онлайн-запись, Telegram-бот",
+        source_url="https://vk.com/wall123456_789",
+    )
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["онлайн-запись", "Telegram-бот"],
+        target_pain="запись через личные сообщения",
+        strict_match=False,
+    )
+    score, _ = score_lead(lead, request)
+    assert score >= 85

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from urllib.parse import urlparse
+from urllib.parse import urlparse, urlunparse
 
 from app.schemas import SearchRequest
 
@@ -81,6 +81,38 @@ CHAIN_RE = re.compile(
     re.IGNORECASE,
 )
 
+LARGE_BRAND_RE = re.compile(
+    r"\b(?:медси|medsi|см[-\s]?клиник\w*|см[-\s]?косметолог\w*|"
+    r"будь\s+здоров|мать\s+и\s+дитя|семейн\w*\s+доктор|"
+    r"европейск\w*\s+медицинск\w*\s+центр)\b",
+    re.IGNORECASE,
+)
+
+LARGE_COUNT_RE = re.compile(
+    r"\b(?:более\s+|свыше\s+|около\s+)?(\d{2,})\s+"
+    r"(?:врач\w*|специалист\w*|косметолог\w*|сотрудник\w*)\b|"
+    r"\b(?:более\s+|свыше\s+|около\s+)?([3-9]|\d{2,})\s+"
+    r"(?:клиник\w*|филиал\w*|отделени\w*|салон\w*|центр\w*)\b",
+    re.IGNORECASE,
+)
+
+ENTERPRISE_PRIMARY_RE = re.compile(
+    r"\b(?:медицинск\w*\s+холдинг|группа\s+компани\w*|"
+    r"сеть\s+медицинск\w*\s+центр\w*|сеть\s+клиник\w*|"
+    r"многопрофильн\w*\s+(?:клиник\w*|центр\w*)|"
+    r"крупн\w*\s+(?:клиник\w*|сеть|холдинг)|"
+    r"единый\s+контактн\w*\s+центр)\b",
+    re.IGNORECASE,
+)
+
+ENTERPRISE_SUPPORT_RE = re.compile(
+    r"\b(?:личн\w*\s+кабинет|мобильн\w*\s+приложени\w*|"
+    r"собственн\w*\s+приложени\w*|колл[-\s]?центр|"
+    r"работаем\s+в\s+нескольк\w*\s+регион\w*|"
+    r"представлен\w*\s+в\s+\d+\s+город\w*)\b",
+    re.IGNORECASE,
+)
+
 DIRECTORY_TEXT_RE = re.compile(
     r"\b(?:каталог|агрегатор|рейтинг|топ[-\s]?\d+|лучшие\s+\d*|"
     r"отзывы\s+(?:о|об|на)|сравн(?:ить|ение)|список\s+(?:врачей|мастеров|специалистов)|"
@@ -118,6 +150,24 @@ CONTACT_OR_ACTION_RE = re.compile(
     re.IGNORECASE,
 )
 
+ROLE_RE = re.compile(
+    r"(?:врач[-\s]?)?(?:косметолог|эстетист|бровист|визажист|"
+    r"л[эе]шмейкер|lash[-\s]?мастер|мастер\s+маникюра|"
+    r"массажист|парикмахер|стилист)",
+    re.IGNORECASE,
+)
+
+PERSON_AFTER_ROLE_RE = re.compile(
+    rf"{ROLE_RE.pattern}\s+([А-ЯЁA-Z][а-яёa-z]{{2,}}(?:\s+[А-ЯЁA-Z][а-яёa-z]{{2,}}){{0,2}})",
+)
+
+PERSON_BEFORE_ROLE_RE = re.compile(
+    rf"([А-ЯЁA-Z][а-яёa-z]{{2,}}(?:\s+[А-ЯЁA-Z][а-яёa-z]{{2,}}){{0,2}})\s*[-—|:]\s*{ROLE_RE.pattern}",
+)
+
+QUOTED_BRAND_RE = re.compile(r"[«\"']([^«»\"']{3,60})[»\"']")
+HANDLE_RE = re.compile(r"@([a-z0-9_.-]{3,40})", re.IGNORECASE)
+
 CITY_ALIASES = {
     "москва": ("москва", "москве", "москвы", "московск"),
     "санкт-петербург": ("санкт-петербург", "петербург", "спб", "питер"),
@@ -145,12 +195,70 @@ NICHE_GROUPS = {
     "массаж": ("массаж", "массажист"),
 }
 
+GENERIC_TOKEN_PREFIXES = (
+    "косметолог",
+    "косметологичес",
+    "эстетичес",
+    "контурн",
+    "инъекцион",
+    "аппаратн",
+    "лазерн",
+    "пластик",
+    "процедур",
+    "услуг",
+    "специалист",
+    "врач",
+    "центр",
+    "клиник",
+    "салон",
+    "студи",
+    "кабинет",
+    "цен",
+    "прайс",
+    "запис",
+    "прием",
+    "консультац",
+    "взросл",
+    "детск",
+    "медицинск",
+    "частн",
+    "луч",
+    "топ",
+)
+
+GENERIC_STOPWORDS = {
+    "в",
+    "на",
+    "и",
+    "по",
+    "для",
+    "из",
+    "с",
+    "к",
+    "от",
+    "до",
+    "москва",
+    "москве",
+    "москвы",
+    "московский",
+    "россия",
+}
+
 
 @dataclass(frozen=True)
 class QualityDecision:
     accepted: bool
     score: int
     reasons: tuple[str, ...]
+
+
+@dataclass(frozen=True)
+class IdentityDecision:
+    accepted: bool
+    score: int
+    name: str
+    reason: str
+    generic: bool = False
 
 
 def normalize_text(value: str | None) -> str:
@@ -195,6 +303,113 @@ def hard_bad_path(url: str | None) -> bool:
         return True
     parsed = urlparse(url)
     return bool(BAD_PATH_RE.search(parsed.path or ""))
+
+
+def is_social_post_url(url: str | None) -> bool:
+    if not url:
+        return False
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    parts = [part for part in parsed.path.split("/") if part]
+
+    if host == "vk.com" and parts:
+        return bool(re.match(r"(?:wall|photo|video|clip)-?\d+_\d+", parts[0]))
+
+    if host in {"t.me", "telegram.me"}:
+        if parts and parts[0] == "s":
+            parts = parts[1:]
+        return len(parts) >= 2 and parts[-1].isdigit()
+
+    if host == "instagram.com" and parts:
+        return parts[0].lower() in {"p", "reel", "reels", "stories", "tv"}
+
+    if host == "tiktok.com":
+        return "video" in parts
+
+    if host in {"youtube.com", "youtu.be"}:
+        return host == "youtu.be" or (parts and parts[0] in {"watch", "shorts"})
+
+    return False
+
+
+def canonical_social_profile_url(url: str | None, text: str = "") -> str | None:
+    if not url:
+        return None
+
+    parsed = urlparse(url)
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    parts = [part for part in parsed.path.split("/") if part]
+
+    if host == "vk.com":
+        if not parts:
+            return None
+
+        wall_match = re.match(r"wall(-?)(\d+)_\d+", parts[0], re.IGNORECASE)
+        if wall_match:
+            prefix = "club" if wall_match.group(1) == "-" else "id"
+            return f"https://vk.com/{prefix}{wall_match.group(2)}"
+
+        if parts[0].lower() in {
+            "feed",
+            "search",
+            "clips",
+            "video",
+            "photo",
+            "market",
+            "topic",
+        }:
+            return None
+
+        return f"https://vk.com/{parts[0]}"
+
+    if host in {"t.me", "telegram.me"}:
+        if parts and parts[0] == "s":
+            parts = parts[1:]
+        if not parts:
+            return None
+
+        username = parts[0].lstrip("@")
+        if username.startswith("+") or username.lower() in {
+            "share",
+            "iv",
+            "proxy",
+            "joinchat",
+            "addstickers",
+        }:
+            return None
+        return f"https://t.me/{username}"
+
+    if host == "instagram.com":
+        if parts and parts[0].lower() not in {
+            "p",
+            "reel",
+            "reels",
+            "stories",
+            "tv",
+            "explore",
+        }:
+            return f"https://www.instagram.com/{parts[0].lstrip('@')}/"
+
+        handle_match = HANDLE_RE.search(text or "")
+        if handle_match:
+            return f"https://www.instagram.com/{handle_match.group(1)}/"
+        return None
+
+    if host == "tiktok.com":
+        for part in parts:
+            if part.startswith("@") and len(part) > 1:
+                return f"https://www.tiktok.com/{part}"
+        return None
+
+    if host == "youtube.com":
+        if parts and parts[0] in {"channel", "c", "user", "@"} and len(parts) >= 2:
+            return urlunparse(("https", "www.youtube.com", "/" + "/".join(parts[:2]), "", "", ""))
+        if parts and parts[0].startswith("@"):
+            return f"https://www.youtube.com/{parts[0]}"
+        return None
+
+    return None
 
 
 def niche_terms(niche: str) -> tuple[str, ...]:
@@ -245,6 +460,133 @@ def text_matches_city(text: str, city: str) -> bool:
     return any(term in normalized for term in city_terms(city))
 
 
+def _clean_person_candidate(value: str, city: str) -> str | None:
+    tokens = re.findall(r"[А-ЯЁA-Z][а-яёa-z]{2,}", value)
+    city_values = set(city_terms(city))
+
+    cleaned: list[str] = []
+    for token in tokens:
+        normalized = normalize_text(token)
+        if any(city_value in normalized or normalized in city_value for city_value in city_values):
+            break
+        if any(normalized.startswith(prefix) for prefix in GENERIC_TOKEN_PREFIXES):
+            break
+        cleaned.append(token)
+
+    if not cleaned or len(cleaned) > 3:
+        return None
+
+    return " ".join(cleaned)
+
+
+def extract_person_name(title: str, city: str = "") -> str | None:
+    for pattern in (PERSON_AFTER_ROLE_RE, PERSON_BEFORE_ROLE_RE):
+        match = pattern.search(title or "")
+        if not match:
+            continue
+        candidate = _clean_person_candidate(match.group(1), city)
+        if candidate:
+            return candidate
+    return None
+
+
+def _distinctive_title_segment(title: str, niche: str, city: str) -> str | None:
+    segment = re.split(r"\s+[|—]\s+|\s+-\s+", title or "", maxsplit=1)[0].strip()
+    if not segment:
+        return None
+
+    normalized = normalize_text(segment)
+    niche_values = niche_terms(niche)
+    city_values = city_terms(city)
+    tokens = re.findall(r"[a-zа-я0-9]+", normalized)
+    residue: list[str] = []
+
+    for token in tokens:
+        if token in GENERIC_STOPWORDS:
+            continue
+        if any(token.startswith(prefix) for prefix in GENERIC_TOKEN_PREFIXES):
+            continue
+        if any(value in token or token in value for value in niche_values if len(value) >= 4):
+            continue
+        if any(value in token or token in value for value in city_values if len(value) >= 4):
+            continue
+        residue.append(token)
+
+    if not residue:
+        return None
+
+    if len(residue) > 6:
+        return None
+
+    return segment[:255]
+
+
+def _social_handle_from_profile(profile_url: str | None) -> str | None:
+    if not profile_url:
+        return None
+    parsed = urlparse(profile_url)
+    parts = [part for part in parsed.path.split("/") if part]
+    if not parts:
+        return None
+    if parts[0] in {"channel", "c", "user"} and len(parts) > 1:
+        return parts[1]
+    return parts[0].lstrip("@")
+
+
+def assess_identity(
+    *,
+    title: str,
+    snippet: str,
+    url: str,
+    niche: str,
+    city: str,
+) -> IdentityDecision:
+    person_name = extract_person_name(title, city)
+    if person_name:
+        return IdentityDecision(True, 25, person_name, "найдено имя специалиста", False)
+
+    quoted = QUOTED_BRAND_RE.search(title or "")
+    if quoted:
+        quoted_name = quoted.group(1).strip()
+        if _distinctive_title_segment(quoted_name, niche, city):
+            return IdentityDecision(True, 20, quoted_name, "найдено название бизнеса", False)
+
+    distinctive = _distinctive_title_segment(title, niche, city)
+    profile_url = canonical_social_profile_url(url, f"{title} {snippet}")
+    social_post = is_social_post_url(url)
+    host = host_of(url)
+
+    if distinctive:
+        return IdentityDecision(True, 15, distinctive, "найдено различимое название", False)
+
+    if social_post:
+        return IdentityDecision(
+            False,
+            0,
+            "",
+            "социальная публикация не содержит имени специалиста или названия бизнеса",
+            True,
+        )
+
+    handle = _social_handle_from_profile(profile_url)
+    if handle and host in {"instagram.com", "vk.com", "tiktok.com"}:
+        return IdentityDecision(
+            True,
+            8,
+            f"Профиль @{handle}",
+            "есть уникальный профиль, но имя бизнеса не подтверждено",
+            True,
+        )
+
+    return IdentityDecision(
+        False,
+        0,
+        "",
+        "не найдено имя специалиста или различимое название бизнеса",
+        True,
+    )
+
+
 def _custom_exclusion_match(text: str, exclude: str) -> str | None:
     normalized_text = normalize_text(text)
 
@@ -252,6 +594,28 @@ def _custom_exclusion_match(text: str, exclude: str) -> str | None:
         item = normalize_text(raw_item)
         if len(item) >= 4 and item in normalized_text:
             return item
+
+    return None
+
+
+def enterprise_rejection_reason(text: str) -> str | None:
+    normalized = normalize_text(text)
+
+    if LARGE_BRAND_RE.search(normalized):
+        return "известная крупная сеть или медицинский холдинг"
+
+    if CHAIN_RE.search(normalized):
+        return "сеть, франшиза или несколько филиалов"
+
+    if ENTERPRISE_PRIMARY_RE.search(normalized):
+        return "крупная клиника, холдинг или группа компаний"
+
+    if LARGE_COUNT_RE.search(normalized):
+        return "слишком много клиник, филиалов, врачей или специалистов"
+
+    support_signals = ENTERPRISE_SUPPORT_RE.findall(normalized)
+    if len(support_signals) >= 2:
+        return "набор признаков крупной организации"
 
     return None
 
@@ -265,8 +629,9 @@ def hard_rejection_reason(text: str, url: str, exclude: str = "") -> str | None:
     if hard_bad_path(url):
         return "служебная, обзорная, каталожная или вакансионная страница"
 
-    if CHAIN_RE.search(normalized):
-        return "сеть, франшиза или много филиалов"
+    enterprise = enterprise_rejection_reason(normalized)
+    if enterprise:
+        return enterprise
 
     if DIRECTORY_TEXT_RE.search(normalized):
         return "каталог, рейтинг, отзывы или подборка"
@@ -307,21 +672,35 @@ def assess_candidate_text(
     if not text_matches_niche(normalized, niche):
         return QualityDecision(False, 0, ("не подтверждена запрошенная ниша",))
 
+    identity = assess_identity(
+        title=title,
+        snippet=snippet,
+        url=url,
+        niche=niche,
+        city=city,
+    )
+    if not identity.accepted:
+        return QualityDecision(False, 0, (identity.reason,))
+
     host = host_of(url)
     city_match = text_matches_city(normalized, city)
     local_signal = bool(SMALL_BUSINESS_RE.search(normalized))
     action_signal = bool(CONTACT_OR_ACTION_RE.search(normalized))
-    social_or_booking = is_social_host(host) or is_booking_host(host)
+    profile_url = canonical_social_profile_url(url, combined)
+    social_profile = bool(profile_url and is_social_host(host))
 
     if require_city and not city_match:
         return QualityDecision(False, 0, ("не подтвержден запрошенный город",))
 
-    score = 45
-    reasons = ["подтверждена ниша +45"]
+    score = 25
+    reasons = ["подтверждена ниша +25"]
+
+    score += identity.score
+    reasons.append(f"{identity.reason} +{identity.score}")
 
     if city_match:
-        score += 20
-        reasons.append("подтвержден город +20")
+        score += 15
+        reasons.append("подтвержден город +15")
     else:
         score -= 10
         reasons.append("город не подтвержден -10")
@@ -334,11 +713,15 @@ def assess_candidate_text(
         score += 10
         reasons.append("есть запись или прямой контакт +10")
 
-    if social_or_booking:
-        score += 10
-        reasons.append("найден профиль бизнеса +10")
+    if social_profile:
+        score += 5
+        reasons.append("найден канонический профиль бизнеса +5")
 
-    accepted = score >= 50 and (local_signal or action_signal or social_or_booking)
+    if identity.generic:
+        score = min(score, 60)
+        reasons.append("профиль без подтвержденного имени: потолок 60")
+
+    accepted = score >= 45 and (local_signal or action_signal or social_profile)
 
     if not accepted:
         reasons.append("недостаточно признаков реального локального бизнеса")
@@ -350,14 +733,22 @@ def assess_candidate_text(
     )
 
 
-def canonical_result_key(url: str) -> str:
+def canonical_result_key(url: str, text: str = "") -> str:
     parsed = urlparse(url)
     host = (parsed.hostname or "").lower().removeprefix("www.")
+
+    if is_social_host(host):
+        profile_url = canonical_social_profile_url(url, text)
+        if not profile_url:
+            return ""
+        profile = urlparse(profile_url)
+        profile_host = (profile.hostname or "").lower().removeprefix("www.")
+        profile_path = re.sub(r"/+", "/", profile.path or "/").rstrip("/").lower()
+        return f"{profile_host}{profile_path}"
+
     path = re.sub(r"/+", "/", parsed.path or "/").rstrip("/").lower()
-
-    if is_social_host(host) or is_booking_host(host):
+    if is_booking_host(host):
         return f"{host}{path}"
-
     return host
 
 
@@ -366,7 +757,8 @@ def rank_search_results(results, req: SearchRequest, max_results: int):
     seen_keys: set[str] = set()
 
     for result in results:
-        key = canonical_result_key(result.url)
+        combined = f"{result.title} {result.snippet}"
+        key = canonical_result_key(result.url, combined)
         if not key or key in seen_keys:
             continue
 
@@ -384,6 +776,7 @@ def rank_search_results(results, req: SearchRequest, max_results: int):
             continue
 
         seen_keys.add(key)
+        result.profile_url = canonical_social_profile_url(result.url, combined)
         result.quality_score = decision.score
         result.quality_reason = "; ".join(decision.reasons)
         ranked.append(result)
@@ -406,6 +799,20 @@ def pain_is_confirmed(value: str | None) -> bool:
         and normalized != "не найден"
         and not normalized.startswith("выбранная боль не подтверждена")
     )
+
+
+def pain_is_explicit(value: str | None) -> bool:
+    normalized = normalize_text(value)
+    if not pain_is_confirmed(value):
+        return False
+    inferred_markers = (
+        "не обнаружен",
+        "не обнаружены",
+        "на проверенной странице не найдена",
+        "в поиске найден только профиль",
+        "отдельный сайт не обнаружен",
+    )
+    return not any(marker in normalized for marker in inferred_markers)
 
 
 def offer_is_relevant(value: str | None) -> bool:

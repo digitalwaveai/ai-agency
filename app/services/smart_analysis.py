@@ -387,11 +387,10 @@ async def analyze_and_filter_leads(
 
     analyzed: list[LeadCreate] = []
 
-    for original, result in zip(leads, results):
+    for result in results:
         if isinstance(result, Exception):
-            if not strict_match:
-                analyzed.append(original)
-        elif result is not None:
+            continue
+        if result is not None:
             analyzed.append(result)
 
     return analyzed
