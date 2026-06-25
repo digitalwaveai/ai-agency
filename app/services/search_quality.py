@@ -52,6 +52,11 @@ CONTENT_HOSTS = {
     "livejournal.ru",
 }
 
+VERIFICATION_BLOCKED_HOSTS = {
+    "facebook.com",
+    "fb.com",
+}
+
 SOCIAL_HOSTS = {
     "instagram.com",
     "vk.com",
@@ -144,6 +149,34 @@ TRAINING_TEXT_RE = re.compile(
 ARTICLE_TEXT_RE = re.compile(
     r"\b(?:что\s+такое|как\s+выбрать|советы|статья|обзор|новости|"
     r"энциклопедия|инструкция|сколько\s+зарабатывает)\b",
+    re.IGNORECASE,
+)
+
+ACCESS_BLOCKED_RE = re.compile(
+    r"(?:log\s+in\s+or\s+sign\s+up\s+to\s+view|"
+    r"log\s+in\s+to\s+continue|sign\s+up\s+to\s+see|"
+    r"войдите,?\s+чтобы\s+(?:продолжить|посмотреть)|"
+    r"требуется\s+авторизац|контент\s+недоступен\s+без\s+входа)",
+    re.IGNORECASE,
+)
+
+COSMETOLOGY_CORE_SERVICE_RE = re.compile(
+    r"(?:инъекц\w*|контурн\w*\s+пластик\w*|ботокс|ботулин\w*|"
+    r"филлер\w*|биоревитал\w*|мезотерап\w*|пилинг\w*|"
+    r"чистк\w*\s+(?:лица|лиц)|уход\w*\s+за\s+лиц\w*|"
+    r"аппаратн\w*\s+косметолог\w*|лазерн\w*\s+(?:омолож|косметолог)\w*|"
+    r"дерматолог\w*|косметологическ\w*\s+процедур\w*)",
+    re.IGNORECASE,
+)
+
+ADJACENT_BEAUTY_PRIMARY_RE = re.compile(
+    r"(?:наращиван\w*\s+ресниц\w*|ламинирован\w*\s+ресниц\w*|"
+    r"л[эе]шмейкер\w*|lash(?:maker|master)?|"
+    r"визажист\w*|макияж\w*|makeup|make-up|мейкап|"
+    r"бровист\w*|оформлен\w*\s+бров\w*|brow(?:master)?|"
+    r"маникюр\w*|педикюр\w*|nail(?:master)?|ногтев\w*|"
+    r"парикмахер\w*|стрижк\w*|окрашиван\w*\s+волос\w*|hair(?:master)?|"
+    r"перманентн\w*\s+макияж\w*|татуаж\w*)",
     re.IGNORECASE,
 )
 
@@ -677,6 +710,49 @@ def _custom_exclusion_match(text: str, exclude: str) -> str | None:
     return None
 
 
+def verification_rejection_reason(text: str, url: str) -> str | None:
+    host = host_of(url)
+    normalized = normalize_text(text)
+
+    if is_host_in(host, VERIFICATION_BLOCKED_HOSTS):
+        return "страница требует авторизации и не поддается надежной автоматической проверке"
+
+    if ACCESS_BLOCKED_RE.search(normalized):
+        return "содержимое страницы недоступно без авторизации"
+
+    return None
+
+
+def niche_mismatch_reason(
+    *,
+    title: str,
+    snippet: str,
+    url: str,
+    niche: str,
+) -> str | None:
+    requested = normalize_text(niche)
+
+    if not any(
+        marker in requested
+        for marker in ("косметолог", "косметология", "эстетист")
+    ):
+        return None
+
+    primary_text = normalize_text(f"{title} {url}")
+    all_text = normalize_text(f"{title} {snippet} {url}")
+
+    if (
+        ADJACENT_BEAUTY_PRIMARY_RE.search(primary_text)
+        and not COSMETOLOGY_CORE_SERVICE_RE.search(all_text)
+    ):
+        return (
+            "основная специализация относится к смежной beauty-нише, "
+            "а косметологические процедуры не подтверждены"
+        )
+
+    return None
+
+
 def enterprise_rejection_reason(text: str) -> str | None:
     normalized = normalize_text(text)
 
@@ -742,6 +818,10 @@ def target_pain_contradiction_reason(
 def hard_rejection_reason(text: str, url: str, exclude: str = "") -> str | None:
     normalized = normalize_text(text)
 
+    verification = verification_rejection_reason(normalized, url)
+    if verification:
+        return verification
+
     if hard_bad_host(url):
         return "каталог, агрегатор, отзывы, вакансии или информационный сайт"
 
@@ -795,6 +875,15 @@ def assess_candidate_text(
 
     if not text_matches_niche(normalized, niche):
         return QualityDecision(False, 0, ("не подтверждена запрошенная ниша",))
+
+    mismatch = niche_mismatch_reason(
+        title=title,
+        snippet=snippet,
+        url=url,
+        niche=niche,
+    )
+    if mismatch:
+        return QualityDecision(False, 0, (mismatch,))
 
     if GENERIC_LISTING_TITLE_RE.search(normalize_text(title)):
         return QualityDecision(

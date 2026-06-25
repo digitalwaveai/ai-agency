@@ -21,18 +21,31 @@ class SearchResult:
     profile_url: str | None = None
 
 
-def _negative_terms() -> str:
-    return (
+def _negative_terms(niche: str = "") -> str:
+    terms = (
         "-вакансии -работа -курс -обучение -рейтинг -отзывы "
         "-каталог -франшиза -сеть -филиал -холдинг -агрегатор "
-        "-pinterest -tgstat -livejournal"
+        "-pinterest -tgstat -livejournal -facebook"
     )
+
+    normalized_niche = niche.lower().replace("ё", "е")
+    if any(
+        marker in normalized_niche
+        for marker in ("косметолог", "косметология", "эстетист")
+    ):
+        terms += (
+            ' -"наращивание ресниц" -лешмейкер -lash '
+            '-визажист -макияж -makeup -бровист '
+            '-маникюр -педикюр -парикмахер'
+        )
+
+    return terms
 
 
 def generate_queries(req: SearchRequest) -> list[str]:
     niche = req.niche.strip()
     city = req.city.strip()
-    negative = _negative_terms()
+    negative = _negative_terms(niche)
 
     queries = [
         f"{niche} {city} частный мастер запись {negative}",

@@ -461,3 +461,177 @@ def test_negated_online_booking_is_not_a_contradiction():
         "Онлайн-запись на странице не обнаружена",
         "запись через личные сообщения",
     ) is None
+
+
+def test_quality_rejects_lashmaker_for_cosmetologist():
+    decision = assess_candidate_text(
+        title="НАРАЩИВАНИЕ РЕСНИЦ! Косметолог! Москва!",
+        snippet="Мастер по ресницам, запись в сообщения",
+        url="https://vk.com/public78610651",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "смежной beauty-нише" in decision.reasons[0]
+
+
+def test_quality_rejects_makeup_studio_for_cosmetologist():
+    decision = assess_candidate_text(
+        title="Кристина | косметолог | Москва",
+        snippet="Студия красоты",
+        url="https://www.facebook.com/makeup.studio.kristina/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_quality_accepts_cosmetologist_with_core_procedures_and_brows():
+    decision = assess_candidate_text(
+        title="Анна — врач-косметолог Москва",
+        snippet=(
+            "Инъекционная косметология, пилинги, чистка лица и оформление бровей. "
+            "Запись в WhatsApp +79991112233"
+        ),
+        url="https://anna-cosmetolog.ru/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is True
+
+
+def test_quality_rejects_facebook_as_unverifiable_source():
+    decision = assess_candidate_text(
+        title="Кристина — косметолог — Москва",
+        snippet="Косметологические услуги",
+        url="https://www.facebook.com/kristina.cosmetolog/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "авторизац" in decision.reasons[0]
+
+
+def test_quality_rejects_access_block_message():
+    decision = assess_candidate_text(
+        title="Косметолог Кристина Москва",
+        snippet="Log in or sign up to view. See posts, photos and more on Facebook.",
+        url="https://kristina.example.net/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "недоступно" in decision.reasons[0]
+
+
+def test_scoring_rejects_adjacent_lash_niche():
+    lead = sample_lead(
+        name="НАРАЩИВАНИЕ РЕСНИЦ! Косметолог! Москва!",
+        website_url=None,
+        vk_url="https://vk.com/public78610651",
+        description="Мастер по ресницам. Запись в сообщения.",
+        pain_points=(
+            "Запись ведётся вручную через сообщения\n"
+            "Подтверждение: «Для записи пишите в сообщения»"
+        ),
+        suggested_offer="онлайн-запись",
+        source_url="https://vk.com/public78610651",
+    )
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["онлайн-запись"],
+        target_pain="запись через личные сообщения",
+        strict_match=False,
+    )
+    score, reason = score_lead(lead, request)
+    assert score == 0
+    assert "смежной beauty-нише" in reason
+
+
+def test_search_queries_exclude_adjacent_beauty_niches_for_cosmetologist():
+    from app.services.search_service import generate_queries
+
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+    )
+    combined = " ".join(generate_queries(request)).lower()
+    assert '-"наращивание ресниц"' in combined
+    assert "-визажист" in combined
+    assert "-маникюр" in combined
+    assert "-facebook" in combined
+
+
+def test_score_without_pain_evidence_is_capped_at_70():
+    lead = sample_lead(
+        name="ТВОЙ КОСМЕТОЛОГ (@dr.beautysense)",
+        website_url=None,
+        instagram_url="https://www.instagram.com/dr.beautysense/",
+        email=None,
+        phone="+79774561757",
+        whatsapp=None,
+        description="Частный косметолог Москва. Для записи пишите в директ.",
+        pain_points="Запись ведётся вручную через сообщения",
+        suggested_offer="онлайн-запись, Telegram-бот",
+        source_url="https://www.instagram.com/dr.beautysense/",
+    )
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        services=["онлайн-запись", "Telegram-бот"],
+        target_pain="запись через личные сообщения",
+        strict_match=False,
+    )
+    score, _ = score_lead(lead, request)
+    assert score <= 70
+
+
+def test_screenshot_batch_keeps_only_three_relevant_profiles():
+    from app.services.search_quality import rank_search_results
+    from app.services.search_service import SearchResult
+
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+        min_score=50,
+        strict_match=False,
+    )
+    results = [
+        SearchResult(
+            "ТВОЙ КОСМЕТОЛОГ (@dr.beautysense) | TikTok",
+            "https://www.tiktok.com/@dr.beautysense",
+            "Косметолог Москва. Телефон +79774561757",
+        ),
+        SearchResult(
+            "НАРАЩИВАНИЕ РЕСНИЦ! Косметолог! Москва!",
+            "https://vk.com/public78610651",
+            "Мастер по ресницам. Запись в сообщения.",
+        ),
+        SearchResult(
+            "DR.BELCHIKOVA / КОСМЕТОЛОГ / Москва",
+            "https://vk.com/cosmetolog_belchikova",
+            "Косметолог Москва. Запись в сообщения.",
+        ),
+        SearchResult(
+            "Кристина | косметолог | Москва",
+            "https://www.facebook.com/makeup.studio.kristina/",
+            "Log in or sign up to view",
+        ),
+        SearchResult(
+            "Профиль @kosmetologlanamoskva",
+            "https://www.instagram.com/kosmetologlanamoskva/",
+            "Косметолог Москва. Телефон +7 968 013-72-20",
+        ),
+    ]
+    ranked = rank_search_results(results, request, 20)
+    titles = [item.title for item in ranked]
+    assert len(ranked) == 3
+    assert any("dr.beautysense" in title for title in titles)
+    assert any("BELCHIKOVA" in title for title in titles)
+    assert any("kosmetologlanamoskva" in title for title in titles)
+    assert all("РЕСНИЦ" not in title for title in titles)
+    assert all("Кристина" not in title for title in titles)
+

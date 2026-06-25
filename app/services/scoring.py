@@ -7,6 +7,7 @@ from app.services.search_quality import (
     assess_identity,
     enterprise_rejection_reason,
     hard_rejection_reason,
+    niche_mismatch_reason,
     offer_is_relevant,
     pain_is_confirmed,
     pain_is_explicit,
@@ -60,6 +61,15 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     )
     if contradiction:
         return 0, f"жесткий отказ: {contradiction}"
+
+    mismatch = niche_mismatch_reason(
+        title=lead.name,
+        snippet=lead.description or "",
+        url=lead.source_url,
+        niche=niche,
+    )
+    if mismatch:
+        return 0, f"жесткий отказ: {mismatch}"
 
     identity = assess_identity(
         title=lead.name,
@@ -117,13 +127,14 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
 
     explicit_pain = pain_is_explicit(lead.pain_points)
     confirmed_pain = pain_is_confirmed(lead.pain_points)
+    pain_has_evidence = "подтверждение" in str(lead.pain_points or "").lower()
 
-    if explicit_pain:
+    if explicit_pain and pain_has_evidence:
         score += 20
         reasons.append("боль подтверждена явным текстом +20")
     elif confirmed_pain:
         score += 5
-        reasons.append("боль предположена по отсутствию функции +5")
+        reasons.append("боль подтверждена недостаточно явно +5")
     elif req and req.target_pain:
         score -= 25
         reasons.append("целевая боль не подтверждена -25")
@@ -151,14 +162,15 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     if not has_direct_contact:
         caps.append((75, "нет прямого контакта"))
 
-    if req and req.target_pain and not explicit_pain:
-        caps.append((70, "нет явного подтверждения целевой боли"))
+    if req and req.target_pain and not (explicit_pain and pain_has_evidence):
+        caps.append((70, "нет явного подтверждения целевой боли с цитатой"))
 
     if not (
         identity.max_score == 100
         and city_match
         and has_direct_contact
         and explicit_pain
+        and pain_has_evidence
         and (not req or not req.services or offer_is_relevant(lead.suggested_offer))
     ):
         caps.append((95, "не выполнены все условия для score 100"))
