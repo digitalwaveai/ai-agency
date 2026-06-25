@@ -68,10 +68,12 @@ class OutreachResponse(BaseModel):
 class LeadAuditResponse(BaseModel):
     lead_id: int
     lead_name: str
+    display_name: str
     classification: str
     confidence: int = Field(ge=0, le=100)
     fit_level: str
     why_fit: list[str]
+    pain: str | None = None
     evidence: str | None = None
     existing_assets: list[str]
     do_not_offer: list[str]

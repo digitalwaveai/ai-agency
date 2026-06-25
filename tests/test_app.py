@@ -1074,6 +1074,83 @@ def test_lead_audit_cache_invalidates_after_lead_update():
     assert second.json()["cached"] is False
 
 
+
+def test_lead_audit_uses_clean_profile_name_and_compact_evidence():
+    lead_id = add_database_lead(
+        name="ТВОЙ КОСМЕТОЛОГ (@dr.beautysense) | TikTok",
+        tiktok_url="https://www.tiktok.com/@dr.beautysense",
+        instagram_url=None,
+        source_url="https://www.tiktok.com/@dr.beautysense",
+        phone="+79774561757",
+        pain_points=(
+            "Запись ведётся через WhatsApp\n"
+            "Подтверждение: «ТВОЙ КОСМЕТОЛОГ "
+            "(@dr.beautysense) | TikTok ТВОЙ КОСМЕТОЛОГ "
+            "(@dr.beautysense) в TikTok. 5.1M лайк. "
+            "171.4K подписч. Главный врач клиники Beautysense. "
+            "Москва. Запись WhatsApp +79774561757. "
+            "Смотрите новое видео пользователя.»"
+        ),
+    )
+
+    response = client.post(f"/leads/{lead_id}/audit")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["display_name"] == "@dr.beautysense"
+    assert data["pain"] == "Запись ведётся через WhatsApp"
+    assert "Запись WhatsApp +79774561757" in data["evidence"]
+    assert len(data["evidence"]) <= 180
+    assert "TikTok" not in data["evidence"]
+    assert "лайк" not in data["evidence"].lower()
+    assert "подпис" not in data["evidence"].lower()
+    assert "Увидел профиль @dr.beautysense" in data["first_message"]
+    assert "ТВОЙ КОСМЕТОЛОГ" not in data["first_message"]
+
+
+def test_lead_audit_uses_given_name_when_surname_is_first():
+    lead_id = add_database_lead(
+        name="Куликова Светлана | косметолог | Москва",
+        description=(
+            "Куликова Светлана — частный косметолог в Москве. "
+            "Для записи пишите в личные сообщения."
+        ),
+    )
+
+    response = client.post(f"/leads/{lead_id}/audit")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["display_name"] == "Куликова Светлана"
+    assert data["first_message"].startswith("Здравствуйте, Светлана!")
+
+
+def test_lead_audit_addresses_small_business_by_project_name():
+    lead_id = add_database_lead(
+        name="LirioClinic by dr Ambartsumian | косметолог | Москва",
+        description=(
+            "LirioClinic — косметологический кабинет в Москве. "
+            "Для записи пишите в WhatsApp."
+        ),
+        pain_points=(
+            "Запись ведётся через WhatsApp\n"
+            "Подтверждение: «Для записи пишите в WhatsApp»"
+        ),
+        website_url="https://lirioclinic.example",
+        instagram_url=None,
+        source_url="https://lirioclinic.example",
+    )
+
+    response = client.post(f"/leads/{lead_id}/audit")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["display_name"] == "LirioClinic by dr Ambartsumian"
+    assert data["classification"] == "малый бизнес"
+    assert data["first_message"].startswith(
+        "Здравствуйте, команда LirioClinic by dr Ambartsumian!"
+    )
+
 def create_test_watch(owner_user_id="1001", **overrides):
     payload = {
         "owner_user_id": owner_user_id,

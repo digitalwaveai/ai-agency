@@ -335,10 +335,16 @@ def audit_embed(
         else "новый анализ"
     )
 
+    display_name = (
+        audit.get("display_name")
+        or audit.get("lead_name")
+        or "Без названия"
+    )
+
     embed = discord.Embed(
         title=(
             f"💎 Паспорт лида #{audit.get('lead_id')} — "
-            f"{truncate(audit.get('lead_name'), 150)}"
+            f"{truncate(display_name, 150)}"
         ),
         description=(
             f"**Уверенность: {confidence}%** · "
@@ -362,11 +368,23 @@ def audit_embed(
         inline=False,
     )
     embed.add_field(
-        name="Доказательство боли",
+        name="Боль",
         value=truncate(
-            audit.get("evidence")
-            or "Прямая цитата не найдена",
-            700,
+            audit.get("pain")
+            or "Не подтверждена",
+            300,
+        ),
+        inline=False,
+    )
+    embed.add_field(
+        name="Точное подтверждение",
+        value=truncate(
+            (
+                f"«{audit.get('evidence')}»"
+                if audit.get("evidence")
+                else "Прямая цитата не найдена"
+            ),
+            500,
         ),
         inline=False,
     )
@@ -385,7 +403,7 @@ def audit_embed(
         inline=True,
     )
     embed.add_field(
-        name="Лучший оффер",
+        name=f"Лучший оффер для {truncate(display_name, 80)}",
         value=bullet_list(
             audit.get("best_offer"),
         ),
