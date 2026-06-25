@@ -18,7 +18,7 @@ API_URL = os.getenv(
 ).rstrip("/")
 DISCORD_BOT_TOKEN = os.getenv("DISCORD_BOT_TOKEN")
 DISCORD_GUILD_ID = os.getenv("DISCORD_GUILD_ID")
-HTTP_TIMEOUT_SECONDS = 180.0
+HTTP_TIMEOUT_SECONDS = float(os.getenv("HTTP_TIMEOUT_SECONDS", "300"))
 BACKEND_DOWN_MESSAGE = (
     "Backend не запущен. Запустите "
     "python -m uvicorn app.main:app --reload"
