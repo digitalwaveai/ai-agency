@@ -3,17 +3,32 @@ from fastapi.responses import HTMLResponse
 from sqlalchemy.orm import Session
 
 from app.database import get_db, init_db
-from app.models import Lead
-from app.schemas import LeadRead, LeadUpdate, OutreachResponse, SearchRequest
-from app.services.deduplication import find_duplicate
+from app.models import Lead, LeadWatch, LeadWatchSeen
+from app.schemas import (
+    LeadAuditResponse,
+    LeadRead,
+    LeadUpdate,
+    OutreachResponse,
+    PendingWatchNotification,
+    SearchRequest,
+    WatchCreate,
+    WatchRead,
+    WatchRunResponse,
+)
+from app.services.audit_service import get_or_create_lead_audit
 from app.services.export import leads_to_csv
-from app.services.lead_enrichment import result_to_lead
+from app.services.lead_pipeline import search_and_save_leads
 from app.services.outreach_generator import generate_outreach
-from app.services.scoring import score_lead
-from app.services.search_quality import offer_is_relevant, pain_is_confirmed
-from app.services.search_service import SearchService, generate_queries
-from app.services.site_enrichment import enrich_leads_from_web
-from app.services.smart_analysis import analyze_and_filter_leads
+from app.services.search_service import generate_queries
+from app.services.watch_service import (
+    acknowledge_notification,
+    create_watch,
+    due_watches,
+    get_owned_watch,
+    pending_notifications,
+    run_watch,
+    watch_to_read,
+)
 
 
 app = FastAPI(title="Beauty Lead Finder Assistant")
@@ -43,98 +58,7 @@ async def search(
     req: SearchRequest,
     db: Session = Depends(get_db),
 ):
-    results = await SearchService().search(req)
-    lead_inputs = [result_to_lead(result, req) for result in results]
-    lead_inputs = await enrich_leads_from_web(lead_inputs)
-    lead_inputs = await analyze_and_filter_leads(
-        lead_inputs,
-        niche=req.niche,
-        city=req.city,
-        target_pain=req.target_pain,
-        services=req.services,
-        exclude=req.exclude,
-        strict_match=req.strict_match,
-    )
-
-    effective_min_score = max(
-        req.min_score,
-        60 if req.strict_match else req.min_score,
-    )
-    qualified = []
-
-    for lead_in in lead_inputs:
-        lead_in.score, lead_in.score_reason = score_lead(lead_in, req)
-
-        if lead_in.score < effective_min_score:
-            continue
-
-        if req.strict_match and req.target_pain and not pain_is_confirmed(lead_in.pain_points):
-            continue
-
-        if req.strict_match and req.services and not offer_is_relevant(lead_in.suggested_offer):
-            continue
-
-        has_contact = any(
-            [
-                lead_in.email,
-                lead_in.phone,
-                lead_in.telegram_url,
-                lead_in.instagram_url,
-                lead_in.vk_url,
-                lead_in.whatsapp,
-            ]
-        )
-
-        if req.contacts_only and not has_contact:
-            continue
-
-        qualified.append(lead_in)
-
-    qualified.sort(key=lambda item: item.score, reverse=True)
-    qualified = qualified[: req.limit]
-    saved = []
-
-    for lead_in in qualified:
-        duplicate = find_duplicate(db, lead_in)
-
-        if duplicate:
-            refresh_fields = (
-                "name",
-                "website_url",
-                "instagram_url",
-                "telegram_url",
-                "vk_url",
-                "email",
-                "phone",
-                "whatsapp",
-                "description",
-                "pain_points",
-                "suggested_offer",
-                "source_url",
-                "source_type",
-                "score",
-                "score_reason",
-            )
-
-            for field_name in refresh_fields:
-                value = getattr(lead_in, field_name, None)
-                if value not in (None, "", "не найден"):
-                    setattr(duplicate, field_name, value)
-
-            db.add(duplicate)
-            db.commit()
-            db.refresh(duplicate)
-            saved.append(duplicate)
-            continue
-
-        lead = Lead(**lead_in.model_dump())
-        db.add(lead)
-        db.commit()
-        db.refresh(lead)
-        saved.append(lead)
-
-    unique_leads = {lead.id: lead for lead in saved}
-    return list(unique_leads.values())
+    return await search_and_save_leads(req, db)
 
 
 @app.get("/leads", response_model=list[LeadRead])
@@ -152,11 +76,17 @@ def list_leads(
         query = query.filter(Lead.city.ilike(f"%{city}%"))
     if status:
         query = query.filter(Lead.status == status)
-    return query.order_by(Lead.score.desc(), Lead.last_updated_at.desc()).all()
+    return query.order_by(
+        Lead.score.desc(),
+        Lead.last_updated_at.desc(),
+    ).all()
 
 
 @app.get("/leads/{lead_id}", response_model=LeadRead)
-def get_lead(lead_id: int, db: Session = Depends(get_db)):
+def get_lead(
+    lead_id: int,
+    db: Session = Depends(get_db),
+):
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
@@ -179,18 +109,267 @@ def update_lead(
     return lead
 
 
-@app.post("/leads/{lead_id}/outreach", response_model=OutreachResponse)
-def outreach(lead_id: int, db: Session = Depends(get_db)):
+@app.post(
+    "/leads/{lead_id}/audit",
+    response_model=LeadAuditResponse,
+)
+def lead_audit(
+    lead_id: int,
+    force_refresh: bool = False,
+    db: Session = Depends(get_db),
+):
+    lead = db.get(Lead, lead_id)
+    if not lead:
+        raise HTTPException(404, "Lead not found")
+    return get_or_create_lead_audit(
+        db,
+        lead,
+        force_refresh=force_refresh,
+    )
+
+
+@app.post(
+    "/leads/{lead_id}/outreach",
+    response_model=OutreachResponse,
+)
+def outreach(
+    lead_id: int,
+    db: Session = Depends(get_db),
+):
     lead = db.get(Lead, lead_id)
     if not lead:
         raise HTTPException(404, "Lead not found")
     return generate_outreach(lead)
 
 
+@app.post("/watches", response_model=WatchRead)
+def create_lead_watch(
+    payload: WatchCreate,
+    db: Session = Depends(get_db),
+):
+    return watch_to_read(create_watch(db, payload))
+
+
+@app.get("/watches", response_model=list[WatchRead])
+def list_lead_watches(
+    owner_user_id: str,
+    db: Session = Depends(get_db),
+):
+    watches = (
+        db.query(LeadWatch)
+        .filter(LeadWatch.owner_user_id == owner_user_id)
+        .order_by(LeadWatch.created_at.desc())
+        .all()
+    )
+    return [watch_to_read(watch) for watch in watches]
+
+
+@app.get("/watches/due", response_model=list[WatchRead])
+def list_due_watches(
+    limit: int = 20,
+    db: Session = Depends(get_db),
+):
+    return [
+        watch_to_read(watch)
+        for watch in due_watches(
+            db,
+            limit=max(1, min(limit, 100)),
+        )
+    ]
+
+
+@app.post(
+    "/watches/{watch_id}/run",
+    response_model=WatchRunResponse,
+)
+async def run_owned_watch(
+    watch_id: int,
+    owner_user_id: str,
+    db: Session = Depends(get_db),
+):
+    watch = get_owned_watch(
+        db,
+        watch_id,
+        owner_user_id,
+    )
+    if watch is None:
+        raise HTTPException(404, "Радар не найден")
+
+    try:
+        found, new_leads = await run_watch(
+            db,
+            watch,
+            scheduled=False,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return WatchRunResponse(
+        watch=watch_to_read(watch),
+        found_count=len(found),
+        new_count=len(new_leads),
+        new_leads=new_leads,
+    )
+
+
+@app.post(
+    "/watches/{watch_id}/run-scheduled",
+    response_model=WatchRunResponse,
+)
+async def run_scheduled_watch(
+    watch_id: int,
+    db: Session = Depends(get_db),
+):
+    watch = db.get(LeadWatch, watch_id)
+    if watch is None:
+        raise HTTPException(404, "Радар не найден")
+
+    try:
+        found, new_leads = await run_watch(
+            db,
+            watch,
+            scheduled=True,
+        )
+    except ValueError as exc:
+        raise HTTPException(409, str(exc)) from exc
+
+    return WatchRunResponse(
+        watch=watch_to_read(watch),
+        found_count=len(found),
+        new_count=len(new_leads),
+        new_leads=new_leads,
+    )
+
+
+@app.post(
+    "/watches/{watch_id}/pause",
+    response_model=WatchRead,
+)
+def pause_watch(
+    watch_id: int,
+    owner_user_id: str,
+    db: Session = Depends(get_db),
+):
+    watch = get_owned_watch(
+        db,
+        watch_id,
+        owner_user_id,
+    )
+    if watch is None:
+        raise HTTPException(404, "Радар не найден")
+
+    watch.is_active = False
+    db.add(watch)
+    db.commit()
+    db.refresh(watch)
+    return watch_to_read(watch)
+
+
+@app.post(
+    "/watches/{watch_id}/resume",
+    response_model=WatchRead,
+)
+def resume_watch(
+    watch_id: int,
+    owner_user_id: str,
+    db: Session = Depends(get_db),
+):
+    watch = get_owned_watch(
+        db,
+        watch_id,
+        owner_user_id,
+    )
+    if watch is None:
+        raise HTTPException(404, "Радар не найден")
+
+    from datetime import datetime
+
+    watch.is_active = True
+    watch.next_run_at = datetime.utcnow()
+    db.add(watch)
+    db.commit()
+    db.refresh(watch)
+    return watch_to_read(watch)
+
+
+@app.delete("/watches/{watch_id}")
+def delete_watch(
+    watch_id: int,
+    owner_user_id: str,
+    db: Session = Depends(get_db),
+):
+    watch = get_owned_watch(
+        db,
+        watch_id,
+        owner_user_id,
+    )
+    if watch is None:
+        raise HTTPException(404, "Радар не найден")
+
+    (
+        db.query(LeadWatchSeen)
+        .filter(LeadWatchSeen.watch_id == watch_id)
+        .delete(synchronize_session=False)
+    )
+    db.delete(watch)
+    db.commit()
+    return {"deleted": True, "watch_id": watch_id}
+
+
+@app.get(
+    "/watch-notifications/pending",
+    response_model=list[PendingWatchNotification],
+)
+def list_pending_watch_notifications(
+    limit: int = 50,
+    db: Session = Depends(get_db),
+):
+    records = pending_notifications(
+        db,
+        limit=max(1, min(limit, 200)),
+    )
+
+    return [
+        PendingWatchNotification(
+            watch_id=watch.id,
+            watch_name=watch.name,
+            owner_user_id=watch.owner_user_id,
+            lead=lead,
+            first_seen_at=seen.first_seen_at,
+        )
+        for seen, watch, lead in records
+    ]
+
+
+@app.post(
+    "/watch-notifications/{watch_id}/{lead_id}/ack",
+)
+def acknowledge_watch_notification(
+    watch_id: int,
+    lead_id: int,
+    db: Session = Depends(get_db),
+):
+    acknowledged = acknowledge_notification(
+        db,
+        watch_id=watch_id,
+        lead_id=lead_id,
+    )
+    if not acknowledged:
+        raise HTTPException(
+            404,
+            "Ожидающее уведомление не найдено",
+        )
+    return {"acknowledged": True}
+
+
 @app.get("/export.csv")
-def export_csv(db: Session = Depends(get_db)):
+def export_csv(
+    db: Session = Depends(get_db),
+):
     return Response(
         leads_to_csv(db.query(Lead).all()),
         media_type="text/csv",
-        headers={"Content-Disposition": "attachment; filename=leads.csv"},
+        headers={
+            "Content-Disposition": "attachment; filename=leads.csv",
+        },
     )

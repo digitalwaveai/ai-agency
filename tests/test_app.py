@@ -961,3 +961,321 @@ def test_latest_screenshot_rejects_navigation_and_vk_article():
     assert any("kosmetologlanamoskva" in title for title in titles)
     assert all(title != "Повторная" for title in titles)
     assert all("Статьи сообщества" not in title for title in titles)
+
+
+def add_database_lead(**overrides):
+    data = sample_lead(
+        score=82,
+        name="Анна Абушева",
+        description=(
+            "Анна Абушева — частный косметолог в Москве. "
+            "Для записи пишите в личные сообщения."
+        ),
+        pain_points=(
+            "Запись ведётся вручную через сообщения\n"
+            "Подтверждение: «Для записи пишите в личные сообщения»"
+        ),
+        suggested_offer="онлайн-запись, Telegram-бот",
+        website_url=None,
+        instagram_url="https://instagram.com/anna_abusheva",
+        source_url="https://instagram.com/anna_abusheva",
+    )
+    values = data.model_dump()
+    values.update(overrides)
+
+    db = TestingSessionLocal()
+    lead = Lead(**values)
+    db.add(lead)
+    db.commit()
+    db.refresh(lead)
+    lead_id = lead.id
+    db.close()
+    return lead_id
+
+
+def test_lead_audit_builds_passport_and_uses_cache():
+    lead_id = add_database_lead()
+
+    first = client.post(f"/leads/{lead_id}/audit")
+    assert first.status_code == 200
+    first_data = first.json()
+
+    assert first_data["lead_id"] == lead_id
+    assert first_data["cached"] is False
+    assert first_data["confidence"] >= 80
+    assert first_data["evidence"] == "Для записи пишите в личные сообщения"
+    assert first_data["best_offer"]
+    assert "Анна" in first_data["first_message"]
+
+    second = client.post(f"/leads/{lead_id}/audit")
+    assert second.status_code == 200
+    assert second.json()["cached"] is True
+
+
+def test_lead_audit_never_invents_missing_evidence():
+    lead_id = add_database_lead(
+        score=95,
+        pain_points="Выбранная боль не подтверждена",
+        description="Косметолог Москва. Услуги и консультации.",
+    )
+
+    response = client.post(f"/leads/{lead_id}/audit")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert data["evidence"] is None
+    assert data["confidence"] <= 70
+    assert any(
+        "не подтверждена" in warning.lower()
+        for warning in data["warnings"]
+    )
+
+
+def test_lead_audit_does_not_offer_existing_site_or_booking():
+    lead_id = add_database_lead(
+        website_url="https://anna-cosmetolog.ru",
+        description=(
+            "Частный косметолог Москва. "
+            "Есть онлайн-запись через YClients."
+        ),
+        suggested_offer="сайт, онлайн-запись, Telegram-бот",
+    )
+
+    response = client.post(f"/leads/{lead_id}/audit")
+    assert response.status_code == 200
+    data = response.json()
+
+    assert "Сайт" in data["existing_assets"]
+    assert "Онлайн-запись" in data["existing_assets"]
+    assert any("сайта" in item.lower() for item in data["do_not_offer"])
+    assert any("онлайн-записи" in item.lower() for item in data["do_not_offer"])
+    assert all(
+        "сайт" not in item.lower()
+        and "онлайн-запис" not in item.lower()
+        for item in data["best_offer"]
+    )
+
+
+def test_lead_audit_cache_invalidates_after_lead_update():
+    lead_id = add_database_lead()
+
+    first = client.post(f"/leads/{lead_id}/audit")
+    assert first.status_code == 200
+    assert first.json()["cached"] is False
+
+    update = client.patch(
+        f"/leads/{lead_id}",
+        json={"notes": "Проверено вручную"},
+    )
+    assert update.status_code == 200
+
+    second = client.post(f"/leads/{lead_id}/audit")
+    assert second.status_code == 200
+    assert second.json()["cached"] is False
+
+
+def create_test_watch(owner_user_id="1001", **overrides):
+    payload = {
+        "owner_user_id": owner_user_id,
+        "name": "Косметологи Москва",
+        "niche": "косметолог",
+        "city": "Москва",
+        "country": "Россия",
+        "services": ["онлайн-запись", "Telegram-бот"],
+        "target_pain": "запись через личные сообщения",
+        "min_score": 60,
+        "result_limit": 5,
+        "contacts_only": False,
+        "strict_match": False,
+        "interval_hours": 24,
+    }
+    payload.update(overrides)
+    response = client.post("/watches", json=payload)
+    assert response.status_code == 200
+    return response.json()
+
+
+def test_watch_create_and_list_are_owner_scoped():
+    first = create_test_watch("1001")
+    create_test_watch("2002", name="Другой пользователь")
+
+    mine = client.get(
+        "/watches",
+        params={"owner_user_id": "1001"},
+    )
+    assert mine.status_code == 200
+    assert [item["id"] for item in mine.json()] == [first["id"]]
+
+    other = client.get(
+        "/watches",
+        params={"owner_user_id": "2002"},
+    )
+    assert other.status_code == 200
+    assert len(other.json()) == 1
+    assert other.json()[0]["owner_user_id"] == "2002"
+
+
+def test_watch_first_run_is_new_and_second_run_has_no_duplicates(monkeypatch):
+    import app.services.watch_service as watch_service
+
+    lead_id = add_database_lead()
+    watch = create_test_watch()
+
+    async def fake_search_and_save_leads(req, db):
+        return [db.get(Lead, lead_id)]
+
+    monkeypatch.setattr(
+        watch_service,
+        "search_and_save_leads",
+        fake_search_and_save_leads,
+    )
+
+    first = client.post(
+        f"/watches/{watch['id']}/run",
+        params={"owner_user_id": "1001"},
+    )
+    assert first.status_code == 200
+    assert first.json()["found_count"] == 1
+    assert first.json()["new_count"] == 1
+    assert first.json()["new_leads"][0]["id"] == lead_id
+
+    second = client.post(
+        f"/watches/{watch['id']}/run",
+        params={"owner_user_id": "1001"},
+    )
+    assert second.status_code == 200
+    assert second.json()["found_count"] == 1
+    assert second.json()["new_count"] == 0
+    assert second.json()["new_leads"] == []
+
+
+def test_watch_pause_blocks_run_and_resume_restores_it(monkeypatch):
+    import app.services.watch_service as watch_service
+
+    lead_id = add_database_lead()
+    watch = create_test_watch()
+
+    async def fake_search_and_save_leads(req, db):
+        return [db.get(Lead, lead_id)]
+
+    monkeypatch.setattr(
+        watch_service,
+        "search_and_save_leads",
+        fake_search_and_save_leads,
+    )
+
+    paused = client.post(
+        f"/watches/{watch['id']}/pause",
+        params={"owner_user_id": "1001"},
+    )
+    assert paused.status_code == 200
+    assert paused.json()["is_active"] is False
+
+    blocked = client.post(
+        f"/watches/{watch['id']}/run",
+        params={"owner_user_id": "1001"},
+    )
+    assert blocked.status_code == 409
+
+    resumed = client.post(
+        f"/watches/{watch['id']}/resume",
+        params={"owner_user_id": "1001"},
+    )
+    assert resumed.status_code == 200
+    assert resumed.json()["is_active"] is True
+
+    run = client.post(
+        f"/watches/{watch['id']}/run",
+        params={"owner_user_id": "1001"},
+    )
+    assert run.status_code == 200
+    assert run.json()["new_count"] == 1
+
+
+def test_watch_cannot_be_controlled_by_another_owner():
+    watch = create_test_watch("1001")
+
+    response = client.post(
+        f"/watches/{watch['id']}/pause",
+        params={"owner_user_id": "9999"},
+    )
+    assert response.status_code == 404
+
+    deletion = client.delete(
+        f"/watches/{watch['id']}",
+        params={"owner_user_id": "9999"},
+    )
+    assert deletion.status_code == 404
+
+
+def test_due_watches_exclude_paused_watch():
+    active = create_test_watch("1001")
+    paused = create_test_watch("1001", name="Paused")
+
+    pause_response = client.post(
+        f"/watches/{paused['id']}/pause",
+        params={"owner_user_id": "1001"},
+    )
+    assert pause_response.status_code == 200
+
+    due = client.get("/watches/due")
+    assert due.status_code == 200
+    due_ids = {item["id"] for item in due.json()}
+
+    assert active["id"] in due_ids
+    assert paused["id"] not in due_ids
+
+
+def test_scheduled_watch_creates_pending_notification_and_ack(monkeypatch):
+    import app.services.watch_service as watch_service
+
+    lead_id = add_database_lead()
+    watch = create_test_watch()
+
+    async def fake_search_and_save_leads(req, db):
+        return [db.get(Lead, lead_id)]
+
+    monkeypatch.setattr(
+        watch_service,
+        "search_and_save_leads",
+        fake_search_and_save_leads,
+    )
+
+    run = client.post(
+        f"/watches/{watch['id']}/run-scheduled",
+    )
+    assert run.status_code == 200
+    assert run.json()["new_count"] == 1
+
+    pending = client.get("/watch-notifications/pending")
+    assert pending.status_code == 200
+    assert len(pending.json()) == 1
+    assert pending.json()[0]["lead"]["id"] == lead_id
+    assert pending.json()[0]["owner_user_id"] == "1001"
+
+    ack = client.post(
+        f"/watch-notifications/{watch['id']}/{lead_id}/ack"
+    )
+    assert ack.status_code == 200
+
+    empty = client.get("/watch-notifications/pending")
+    assert empty.status_code == 200
+    assert empty.json() == []
+
+
+def test_watch_delete_removes_watch():
+    watch = create_test_watch()
+
+    deleted = client.delete(
+        f"/watches/{watch['id']}",
+        params={"owner_user_id": "1001"},
+    )
+    assert deleted.status_code == 200
+    assert deleted.json()["deleted"] is True
+
+    watches = client.get(
+        "/watches",
+        params={"owner_user_id": "1001"},
+    )
+    assert watches.status_code == 200
+    assert watches.json() == []
