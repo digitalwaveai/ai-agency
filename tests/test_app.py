@@ -833,3 +833,131 @@ def test_last_screenshot_batch_keeps_people_and_review_only_ads():
         "частный косметолог МОСКВА и область",
         "Частный косметолог выезд на дом, 61 год, Москва",
     }
+
+
+def test_navigation_title_repeat_visit_is_rejected_even_with_email():
+    decision = assess_candidate_text(
+        title="Повторная",
+        snippet="Косметолог Москва. Email spa@hormonelife.ru",
+        url="https://hormonelife.ru/repeat",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "служеб" in decision.reasons[0]
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "Главная",
+        "Контакты",
+        "Запись",
+        "Цены",
+        "Услуги",
+        "Подробнее",
+        "Онлайн",
+        "Повторная запись",
+    ],
+)
+def test_navigation_only_titles_are_not_leads(title):
+    decision = assess_candidate_text(
+        title=title,
+        snippet="Косметолог Москва. Телефон +7 999 111-22-33",
+        url="https://small.example.net/page",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_vk_community_article_title_is_rejected():
+    decision = assess_candidate_text(
+        title="Статьи сообщества Прыщи частный КОСМЕТОЛОГ! Москва",
+        snippet="Косметолог Москва",
+        url="https://vk.com/@club149574068",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "статья" in decision.reasons[0]
+
+
+def test_vk_article_route_is_rejected_without_article_words():
+    decision = assess_candidate_text(
+        title="Прыщи частный косметолог Москва",
+        snippet="Косметолог Москва. Запись в сообщения.",
+        url="https://vk.com/@club149574068",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_named_person_kulikova_is_kept():
+    decision = assess_candidate_text(
+        title="Куликова Светлана | косметолог | Москва",
+        snippet="Частный косметолог. Email sveta6881@yandex.ru",
+        url="https://kulikova.example.net/",
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+    )
+    assert decision.accepted is True
+    assert decision.score >= 50
+
+
+def test_latest_screenshot_rejects_navigation_and_vk_article():
+    from app.services.search_quality import rank_search_results
+    from app.services.search_service import SearchResult
+
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+        min_score=50,
+        strict_match=False,
+    )
+    results = [
+        SearchResult(
+            "ТВОЙ КОСМЕТОЛОГ (@dr.beautysense) | TikTok",
+            "https://www.tiktok.com/@dr.beautysense",
+            "Косметолог Москва. Телефон +79774561757",
+        ),
+        SearchResult(
+            "Dr_aidaar at Taplink",
+            "https://taplink.cc/dr_aidaar",
+            "Косметолог Москва. Для записи пишите в личные сообщения.",
+        ),
+        SearchResult(
+            "Повторная",
+            "https://hormonelife.ru/repeat",
+            "Косметолог Москва. Email spa@hormonelife.ru",
+        ),
+        SearchResult(
+            "Статьи сообщества Прыщи частный КОСМЕТОЛОГ!Москва",
+            "https://vk.com/@club149574068",
+            "Косметолог Москва",
+        ),
+        SearchResult(
+            "Куликова Светлана | косметолог | Москва",
+            "https://kulikova.example.net/",
+            "Частный косметолог. Email sveta6881@yandex.ru",
+        ),
+        SearchResult(
+            "Профиль @kosmetologlanamoskva",
+            "https://www.instagram.com/kosmetologlanamoskva/",
+            "Косметолог Москва. Телефон +7 968 013-72-20",
+        ),
+    ]
+
+    ranked = rank_search_results(results, request, 20)
+    titles = [item.title for item in ranked]
+
+    assert len(ranked) == 4
+    assert any("dr.beautysense" in title for title in titles)
+    assert any("Dr_aidaar" in title for title in titles)
+    assert any("Куликова Светлана" in title for title in titles)
+    assert any("kosmetologlanamoskva" in title for title in titles)
+    assert all(title != "Повторная" for title in titles)
+    assert all("Статьи сообщества" not in title for title in titles)

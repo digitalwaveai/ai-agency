@@ -213,6 +213,30 @@ ANONYMOUS_PRIVATE_TITLE_RE = re.compile(
     re.IGNORECASE,
 )
 
+NAVIGATION_ONLY_TITLE_RE = re.compile(
+    r"^\s*(?:главная|контакты?|повторная(?:\s+запись)?|"
+    r"повторн(?:ый|ая|ое)\s+(?:при[её]м|визит)|запись|записаться|"
+    r"цены?|прайс|услуги?|подробнее|онлайн|консультация|"
+    r"при[её]м|расписание|личный\s+кабинет|обратная\s+связь)\s*$",
+    re.IGNORECASE,
+)
+
+SOCIAL_ARTICLE_TITLE_RE = re.compile(
+    r"^\s*(?:стать\w*|публикац\w*|материал\w*|новост\w*)\s+"
+    r"(?:сообществ\w*|групп\w*|пользовател\w*|страниц\w*)\b",
+    re.IGNORECASE,
+)
+
+VK_ARTICLE_PATH_RE = re.compile(
+    r"^/@(?:club|id|public)\d+(?:/|$)",
+    re.IGNORECASE,
+)
+
+SHORT_UNINFORMATIVE_TITLE_RE = re.compile(
+    r"^[a-zа-яё0-9-]{1,18}$",
+    re.IGNORECASE,
+)
+
 
 CLINIC_TITLE_RE = re.compile(
     r"\b(?:clinic|клиник\w*|медицинск\w*\s+центр\w*|"
@@ -744,6 +768,51 @@ def _social_handle_from_profile(profile_url: str | None) -> str | None:
     return parts[0].lstrip("@")
 
 
+def _title_is_navigation_only(title: str) -> bool:
+    return bool(NAVIGATION_ONLY_TITLE_RE.fullmatch(normalize_text(title)))
+
+
+def _title_is_social_article(title: str, url: str) -> bool:
+    parsed = urlparse(url or "")
+    host = (parsed.hostname or "").lower().removeprefix("www.")
+    path = parsed.path or ""
+    normalized_title = normalize_text(title)
+
+    return bool(
+        SOCIAL_ARTICLE_TITLE_RE.search(normalized_title)
+        or (
+            host == "vk.com"
+            and VK_ARTICLE_PATH_RE.search(path)
+        )
+    )
+
+
+def _title_has_minimum_identity_information(
+    title: str,
+    *,
+    niche: str,
+    city: str,
+) -> bool:
+    normalized = normalize_text(title)
+
+    if not normalized or _title_is_navigation_only(title):
+        return False
+
+    if HANDLE_RE.search(title or "") or DOCTOR_HANDLE_RE.search(title or ""):
+        return True
+
+    if extract_person_name(title, city):
+        return True
+
+    if QUOTED_BRAND_RE.search(title or ""):
+        return True
+
+    if SHORT_UNINFORMATIVE_TITLE_RE.fullmatch(normalized):
+        return False
+
+    return bool(_distinctive_title_segment(title, niche, city))
+
+
 def assess_identity(
     *,
     title: str,
@@ -752,7 +821,41 @@ def assess_identity(
     niche: str,
     city: str,
 ) -> IdentityDecision:
-    person_name = extract_person_name(title, city)
+    if _title_is_navigation_only(title):
+        return IdentityDecision(
+            False,
+            0,
+            "",
+            "служебный заголовок страницы не идентифицирует лида",
+            True,
+            0,
+        )
+
+    if _title_is_social_article(title, url):
+        return IdentityDecision(
+            False,
+            0,
+            "",
+            "статья или публикация сообщества не является отдельным лидом",
+            True,
+            0,
+        )
+
+    person_name = extract_person_name(title, city) or extract_person_name(
+        snippet,
+        city,
+    )
+
+    if (
+        not person_name
+        and re.fullmatch(
+            r"[А-ЯЁA-Z][а-яёa-z]{2,}",
+            str(title or "").strip(),
+        )
+        and text_matches_niche(snippet, niche)
+    ):
+        person_name = str(title or "").strip()
+
     if person_name:
         return IdentityDecision(
             True, 25, person_name, "найдено имя специалиста", False, 100
@@ -792,7 +895,11 @@ def assess_identity(
         )
 
     distinctive = _distinctive_title_segment(title, niche, city)
-    if distinctive:
+    if distinctive and _title_has_minimum_identity_information(
+        title,
+        niche=niche,
+        city=city,
+    ):
         return IdentityDecision(
             True, 15, distinctive, "найдено различимое название", False, 100
         )
@@ -894,6 +1001,22 @@ def classify_page_type(
     )
     direct_contact = has_direct_contact_text(combined)
     profile_url = canonical_social_profile_url(url, combined)
+
+    if _title_is_navigation_only(title):
+        return PageTypeDecision(
+            False,
+            "SERVICE_PAGE",
+            "служебная страница без имени специалиста или бизнеса",
+            0,
+        )
+
+    if _title_is_social_article(title, url):
+        return PageTypeDecision(
+            False,
+            "POST",
+            "статья или публикация сообщества вместо профиля клиента",
+            0,
+        )
 
     if is_host_in(host, VIDEO_HOSTS):
         return PageTypeDecision(
@@ -1223,6 +1346,20 @@ def assess_candidate_text(
     require_city: bool = False,
     target_pain: str = "",
 ) -> QualityDecision:
+    if _title_is_navigation_only(title):
+        return QualityDecision(
+            False,
+            0,
+            ("служебный заголовок страницы не идентифицирует лида",),
+        )
+
+    if _title_is_social_article(title, url):
+        return QualityDecision(
+            False,
+            0,
+            ("статья или публикация сообщества вместо профиля клиента",),
+        )
+
     combined = " ".join(part for part in (title, snippet, url) if part)
     normalized = normalize_text(combined)
     rejection = hard_rejection_reason(normalized, url, exclude)
