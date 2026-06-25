@@ -635,3 +635,201 @@ def test_screenshot_batch_keeps_only_three_relevant_profiles():
     assert all("РЕСНИЦ" not in title for title in titles)
     assert all("Кристина" not in title for title in titles)
 
+
+
+def test_page_type_rejects_model_search_community():
+    decision = assess_candidate_text(
+        title="Ищу модель | Ищу мастера | Москва и МО",
+        snippet="Косметолог Москва",
+        url="https://vk.com/model_in_moscow",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "модел" in decision.reasons[0]
+
+
+def test_page_type_rejects_open_day_on_educational_host():
+    decision = assess_candidate_text(
+        title="28/05/2025 День открытых дверей, Москва",
+        snippet="Косметолог. Протокол ведения пациента.",
+        url="https://edu.mesoproff.ru/280525dod_msk",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_page_type_rejects_temporary_promo_post():
+    decision = assess_candidate_text(
+        title="Специальные предложения действуют до 9 марта",
+        snippet="Косметолог Москва. Запись в сообщения.",
+        url="https://vk.com/wall-219849546_123",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "акци" in decision.reasons[0]
+
+
+def test_page_type_rejects_vkvideo_material():
+    decision = assess_candidate_text(
+        title="Прыщи — частный косметолог! Москва",
+        snippet="Косметолог Москва",
+        url="https://m.vkvideo.ru/@club149574068",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+
+
+def test_page_type_rejects_procedure_only_page_without_identity():
+    decision = assess_candidate_text(
+        title="Увеличение ягодиц и контурная пластика",
+        snippet="Косметолог Москва. Телефон 8 (989) 463-56-69",
+        url="https://procedure.example.net/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False
+    assert "процедур" in decision.reasons[0]
+
+
+def test_anonymous_private_cosmetologist_is_review_only():
+    decision = assess_candidate_text(
+        title="Частный косметолог Москва и область",
+        snippet="Услуги косметолога. Email private@example.net",
+        url="https://private-cosmetolog.example.net/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is True
+    assert decision.score <= 45
+
+
+def test_incomplete_phone_is_not_valid_contact():
+    from app.services.search_quality import extract_valid_phone, is_valid_phone
+
+    assert extract_valid_phone("Телефон +7 (495) 363") is None
+    assert extract_valid_phone("Контакт 8-926-414-45") is None
+    assert is_valid_phone("+7 (989) 463-56-69") is True
+
+
+def test_lead_enrichment_does_not_save_incomplete_phone():
+    from app.services.lead_enrichment import result_to_lead
+    from app.services.search_service import SearchResult
+
+    request = SearchRequest(niche="косметолог", city="Москва")
+    lead = result_to_lead(
+        SearchResult(
+            title="Айна Абушева | косметолог | Москва",
+            url="https://vk.com/aina_abusheva",
+            snippet="Телефон 8-926-414-45",
+        ),
+        request,
+    )
+    assert lead.phone is None
+
+
+def test_named_person_is_kept_without_fake_phone_bonus():
+    decision = assess_candidate_text(
+        title="Айна Абушева | косметолог | Москва",
+        snippet="Косметологические услуги. Телефон 8-926-414-45",
+        url="https://vk.com/aina_abusheva",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is True
+    assert all(
+        "запись или прямой контакт" not in reason
+        for reason in decision.reasons
+    )
+
+
+def test_clinic_with_truncated_phone_does_not_enter_main_pool():
+    decision = assess_candidate_text(
+        title="Косметолог Москва LirioClinic by dr Ambartsumian",
+        snippet="Косметолог Москва. Телефон +7 (495) 363",
+        url="https://lirioclinic.example.net/",
+        niche="косметолог",
+        city="Москва",
+    )
+    assert decision.accepted is False or decision.score <= 45
+
+
+def test_last_screenshot_batch_keeps_people_and_review_only_ads():
+    from app.services.search_quality import rank_search_results
+    from app.services.search_service import SearchResult
+
+    request = SearchRequest(
+        niche="косметолог",
+        city="Москва",
+        target_pain="запись через личные сообщения",
+        min_score=50,
+        strict_match=False,
+    )
+    results = [
+        SearchResult(
+            "Айна Абушева | косметолог | Москва",
+            "https://vk.com/aina_abusheva",
+            "Косметолог Москва. Телефон 8-926-414-45",
+        ),
+        SearchResult(
+            "Косметолог Москва LirioClinic by dr Ambartsumian",
+            "https://lirioclinic.example.net/",
+            "Косметолог Москва. Телефон +7 (495) 363",
+        ),
+        SearchResult(
+            "Увеличение ягодиц и контурная пластика",
+            "https://procedure.example.net/",
+            "Косметолог Москва. Телефон 8 (989) 463-56-69",
+        ),
+        SearchResult(
+            "Ищу модель | Ищу мастера | Москва и МО",
+            "https://vk.com/model_in_moscow",
+            "Косметолог Москва",
+        ),
+        SearchResult(
+            "Специальные предложения действуют до 9 марта",
+            "https://vk.com/wall-219849546_123",
+            "Косметолог Москва",
+        ),
+        SearchResult(
+            "28/05/2025 День открытых дверей, Москва",
+            "https://edu.mesoproff.ru/280525dod_msk",
+            "Косметолог. Протокол ведения пациента.",
+        ),
+        SearchResult(
+            "Dr_aidaar at Taplink",
+            "https://taplink.cc/dr_aidaar",
+            "Косметолог Москва. Для записи пишите в личные сообщения.",
+        ),
+        SearchResult(
+            "частный косметолог МОСКВА и область",
+            "https://private.example.net/",
+            "Косметолог Москва. Email private@example.net",
+        ),
+        SearchResult(
+            "Частный косметолог выезд на дом, 61 год, Москва",
+            "https://ads.example.net/",
+            "Косметолог Москва. Телефон 8 (985) 877 28 33",
+        ),
+        SearchResult(
+            "Прыщи частный косметолог Москва",
+            "https://m.vkvideo.ru/@club149574068",
+            "Косметолог Москва",
+        ),
+    ]
+
+    ranked = rank_search_results(results, request, 50)
+    main = [item.title for item in ranked if item.quality_score >= 50]
+    review = [item.title for item in ranked if item.quality_score < 50]
+
+    assert main == [
+        "Айна Абушева | косметолог | Москва",
+        "Dr_aidaar at Taplink",
+    ]
+    assert set(review) == {
+        "частный косметолог МОСКВА и область",
+        "Частный косметолог выезд на дом, 61 год, Москва",
+    }

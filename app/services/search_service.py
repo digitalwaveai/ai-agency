@@ -25,7 +25,9 @@ def _negative_terms(niche: str = "") -> str:
     terms = (
         "-вакансии -работа -курс -обучение -рейтинг -отзывы "
         "-каталог -франшиза -сеть -филиал -холдинг -агрегатор "
-        "-pinterest -tgstat -livejournal -facebook"
+        "-pinterest -tgstat -livejournal -facebook -vkvideo -rutube "
+        '-"ищу модель" -"ищу мастера" -"день открытых дверей" '
+        '-"специальные предложения" -семинар -вебинар -edu'
     )
 
     normalized_niche = niche.lower().replace("ё", "е")

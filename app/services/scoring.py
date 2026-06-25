@@ -5,8 +5,10 @@ import re
 from app.schemas import LeadCreate, SearchRequest
 from app.services.search_quality import (
     assess_identity,
+    classify_page_type,
     enterprise_rejection_reason,
     hard_rejection_reason,
+    is_valid_phone,
     niche_mismatch_reason,
     offer_is_relevant,
     pain_is_confirmed,
@@ -81,6 +83,17 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     if not identity.accepted:
         return 0, f"жесткий отказ: {identity.reason}"
 
+    page_type = classify_page_type(
+        title=lead.name,
+        snippet=lead.description or "",
+        url=lead.source_url,
+        niche=niche,
+        city=city,
+        identity=identity,
+    )
+    if not page_type.accepted:
+        return 0, f"жесткий отказ: {page_type.reason}"
+
     niche_match = bool(niche and text_matches_niche(evidence_text, niche))
     city_match = bool(city and text_matches_city(evidence_text, city))
 
@@ -93,6 +106,17 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
     score += identity.score
     reasons.append(f"{identity.reason} +{identity.score}")
 
+    if page_type.score_bonus:
+        score += page_type.score_bonus
+        reasons.append(
+            f"тип страницы {page_type.page_type}: {page_type.reason} "
+            f"+{page_type.score_bonus}"
+        )
+    else:
+        reasons.append(
+            f"тип страницы {page_type.page_type}: {page_type.reason}"
+        )
+
     if city_match:
         score += 15
         reasons.append("подтвержден город +15")
@@ -104,7 +128,11 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
         score += 15
         reasons.append("частный специалист или небольшой бизнес +15")
 
-    has_direct_contact = any([lead.email, lead.phone, lead.whatsapp])
+    has_direct_contact = bool(
+        lead.email
+        or is_valid_phone(lead.phone)
+        or is_valid_phone(lead.whatsapp)
+    )
     has_social_profile = any(
         [
             lead.telegram_url,
@@ -153,8 +181,10 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
 
     caps: list[tuple[int, str]] = []
 
-    if identity.max_score < 100:
-        caps.append((identity.max_score, identity.reason))
+    page_maximum = min(identity.max_score, page_type.max_score)
+
+    if page_maximum < 100:
+        caps.append((page_maximum, page_type.reason))
 
     if not city_match:
         caps.append((55, "не подтвержден город"))
@@ -166,7 +196,7 @@ def score_lead(lead: LeadCreate, req: SearchRequest | None = None) -> tuple[int,
         caps.append((70, "нет явного подтверждения целевой боли с цитатой"))
 
     if not (
-        identity.max_score == 100
+        page_maximum == 100
         and city_match
         and has_direct_contact
         and explicit_pain

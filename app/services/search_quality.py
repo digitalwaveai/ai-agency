@@ -57,6 +57,21 @@ VERIFICATION_BLOCKED_HOSTS = {
     "fb.com",
 }
 
+
+VIDEO_HOSTS = {
+    "vkvideo.ru",
+    "rutube.ru",
+    "vimeo.com",
+}
+
+EDUCATION_HOST_MARKERS = {
+    "edu",
+    "education",
+    "academy",
+    "school",
+    "course",
+}
+
 SOCIAL_HOSTS = {
     "instagram.com",
     "vk.com",
@@ -152,6 +167,74 @@ ARTICLE_TEXT_RE = re.compile(
     re.IGNORECASE,
 )
 
+
+MODEL_SEARCH_RE = re.compile(
+    r"\b(?:ищу|ищем|поиск|нужн\w*|требуется|набор)\s+"
+    r"(?:модел\w*|мастер\w*)\b|"
+    r"\bмодел\w*\s+(?:для|на)\s+(?:процедур\w*|отработк\w*|обучени\w*)\b",
+    re.IGNORECASE,
+)
+
+EVENT_TEXT_RE = re.compile(
+    r"\b(?:день\s+открытых\s+дверей|мероприяти\w*|"
+    r"мастер[-\s]?класс\w*|семинар\w*|вебинар\w*|"
+    r"конференци\w*|форум\w*|выставк\w*|регистраци\w*\s+на\s+"
+    r"(?:мероприяти\w*|вебинар\w*|семинар\w*))\b",
+    re.IGNORECASE,
+)
+
+PROMO_TITLE_RE = re.compile(
+    r"^\s*(?:специальн\w*\s+предложени\w*|акци\w*|скидк\w*|"
+    r"только\s+до\b|предложени\w*\s+до\b)|"
+    r"\b(?:специальн\w*\s+предложени\w*|акци\w*|скидк\w*)\s+до\s+"
+    r"\d{1,2}(?:[./-]\d{1,2})?(?:[./-]\d{2,4})?\b",
+    re.IGNORECASE,
+)
+
+EVENT_OR_CONTENT_PATH_RE = re.compile(
+    r"(?:^|/)(?:events?|event|мероприятия?|webinars?|seminars?|"
+    r"promos?|promo|акции?|specials?|education|edu|courses?|school|"
+    r"videos?|video|clips?)(?:/|$)",
+    re.IGNORECASE,
+)
+
+PROCEDURE_ONLY_TITLE_RE = re.compile(
+    r"^\s*(?:увеличени\w*\s+(?:губ\w*|ягодиц\w*)|"
+    r"контурн\w*\s+пластик\w*|коррекци\w*\s+(?:носогуб\w*|овал\w*|"
+    r"морщин\w*)|ботокс\w*|ботулинотерап\w*|биоревитализаци\w*|"
+    r"мезотерапи\w*|пилинг\w*|чистк\w*\s+лиц\w*|"
+    r"лазерн\w*\s+омоложени\w*|аппаратн\w*\s+косметолог\w*)"
+    r"(?:\s*(?:и|,|/|\+|—|-).*?)?\s*$",
+    re.IGNORECASE,
+)
+
+ANONYMOUS_PRIVATE_TITLE_RE = re.compile(
+    r"^\s*(?:частн\w*\s+)?(?:врач[-\s]?)?косметолог\w*\b.*$",
+    re.IGNORECASE,
+)
+
+
+CLINIC_TITLE_RE = re.compile(
+    r"\b(?:clinic|клиник\w*|медицинск\w*\s+центр\w*|"
+    r"центр\s+(?:эстетическ\w*\s+)?косметолог\w*)\b",
+    re.IGNORECASE,
+)
+
+DOCTOR_HANDLE_RE = re.compile(
+    r"\b(?:dr|doctor)[._-]?[a-zа-я0-9_.-]{3,}\b|"
+    r"\bby\s+(?:dr|doctor)\.?\s+[a-zа-я][a-zа-я-]{2,}\b",
+    re.IGNORECASE,
+)
+
+EMAIL_TEXT_RE = re.compile(
+    r"[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}",
+    re.IGNORECASE,
+)
+
+PHONE_CANDIDATE_RE = re.compile(
+    r"(?<!\d)(?:\+?\d[\d\s().-]{6,}\d)(?!\d)"
+)
+
 ACCESS_BLOCKED_RE = re.compile(
     r"(?:log\s+in\s+or\s+sign\s+up\s+to\s+view|"
     r"log\s+in\s+to\s+continue|sign\s+up\s+to\s+see|"
@@ -224,8 +307,8 @@ SMALL_BUSINESS_RE = re.compile(
 )
 
 CONTACT_OR_ACTION_RE = re.compile(
-    r"(?:\+?\d[\d\s().-]{8,}\d|@[a-z0-9_.-]+|whatsapp|ватсап|"
-    r"telegram|телеграм|direct|директ|личн\w*\s+сообщ\w*|записаться|запись)",
+    r"(?:@[a-z0-9_.-]+|whatsapp|ватсап|telegram|телеграм|"
+    r"direct|директ|личн\w*\s+сообщ\w*|записаться|запись)",
     re.IGNORECASE,
 )
 
@@ -343,10 +426,55 @@ class IdentityDecision:
     max_score: int = 100
 
 
+
+@dataclass(frozen=True)
+class PageTypeDecision:
+    accepted: bool
+    page_type: str
+    reason: str
+    max_score: int = 100
+    score_bonus: int = 0
+
+
 def normalize_text(value: str | None) -> str:
     text = str(value or "").lower().replace("ё", "е")
     text = re.sub(r"[^a-zа-я0-9@+./:-]+", " ", text)
     return re.sub(r"\s+", " ", text).strip()
+
+
+
+def phone_digits(value: str | None) -> str:
+    return "".join(re.findall(r"\d", str(value or "")))
+
+
+def is_valid_phone(value: str | None) -> bool:
+    digits = phone_digits(value)
+    return 10 <= len(digits) <= 15
+
+
+def extract_valid_phone(text: str | None) -> str | None:
+    for match in PHONE_CANDIDATE_RE.finditer(str(text or "")):
+        candidate = match.group(0).strip(" ,.;:()[]{}")
+        if is_valid_phone(candidate):
+            return candidate
+    return None
+
+
+def has_direct_contact_text(text: str | None) -> bool:
+    value = str(text or "")
+    normalized = normalize_text(value)
+
+    return bool(
+        extract_valid_phone(value)
+        or EMAIL_TEXT_RE.search(value)
+        or re.search(
+            r"(?:whatsapp|ватсап|telegram|телеграм|"
+            r"пишите\s+(?:в\s+)?(?:лс|директ)|"
+            r"личн\w*\s+сообщ\w*|запись\s+через)",
+            normalized,
+            re.IGNORECASE,
+        )
+    )
 
 
 def host_of(url: str | None) -> str:
@@ -377,6 +505,7 @@ def hard_bad_host(url: str | None) -> bool:
         is_host_in(host, DIRECTORY_HOSTS)
         or is_host_in(host, JOB_HOSTS)
         or is_host_in(host, CONTENT_HOSTS)
+        or is_host_in(host, VIDEO_HOSTS)
     )
 
 
@@ -699,6 +828,238 @@ def assess_identity(
     )
 
 
+def _host_looks_educational(host: str) -> bool:
+    labels = {part for part in host.split(".") if part}
+    return bool(labels & EDUCATION_HOST_MARKERS)
+
+
+def _explicit_identity_signal(
+    *,
+    title: str,
+    snippet: str,
+    url: str,
+    city: str,
+) -> bool:
+    combined = f"{title} {snippet}"
+    profile_url = canonical_social_profile_url(url, combined)
+
+    return bool(
+        extract_person_name(title, city)
+        or extract_person_name(snippet, city)
+        or HANDLE_RE.search(title or "")
+        or DOCTOR_HANDLE_RE.search(title or "")
+        or QUOTED_BRAND_RE.search(title or "")
+        or (
+            profile_url
+            and _social_handle_from_profile(profile_url)
+            and not is_social_post_url(url)
+        )
+    )
+
+
+def _looks_like_person_name(value: str | None) -> bool:
+    candidate = str(value or "").strip()
+    return bool(
+        re.fullmatch(
+            r"[А-ЯЁA-Z][а-яёa-z]{2,}"
+            r"(?:\s+[А-ЯЁA-Z][а-яёa-z]{2,}){0,2}",
+            candidate,
+        )
+    )
+
+
+def classify_page_type(
+    *,
+    title: str,
+    snippet: str,
+    url: str,
+    niche: str,
+    city: str,
+    identity: IdentityDecision,
+) -> PageTypeDecision:
+    combined = f"{title} {snippet} {url}"
+    normalized = normalize_text(combined)
+    normalized_title = normalize_text(title)
+    host = host_of(url)
+    parsed = urlparse(url)
+    identity_person = _looks_like_person_name(identity.name)
+    explicit_identity = (
+        identity_person
+        or _explicit_identity_signal(
+            title=title,
+            snippet=snippet,
+            url=url,
+            city=city,
+        )
+    )
+    direct_contact = has_direct_contact_text(combined)
+    profile_url = canonical_social_profile_url(url, combined)
+
+    if is_host_in(host, VIDEO_HOSTS):
+        return PageTypeDecision(
+            False,
+            "VIDEO",
+            "видеоматериал или видеохостинг, а не профиль потенциального клиента",
+            0,
+        )
+
+    if _host_looks_educational(host) or EVENT_OR_CONTENT_PATH_RE.search(
+        parsed.path or ""
+    ):
+        if (
+            _host_looks_educational(host)
+            or TRAINING_TEXT_RE.search(normalized)
+            or EVENT_TEXT_RE.search(normalized)
+        ):
+            return PageTypeDecision(
+                False,
+                "EDUCATION",
+                "учебная или событийная страница, а не потенциальный клиент",
+                0,
+            )
+
+    if MODEL_SEARCH_RE.search(normalized):
+        return PageTypeDecision(
+            False,
+            "MODEL_SEARCH",
+            "поиск моделей или мастеров, а не косметологический бизнес",
+            0,
+        )
+
+    if EVENT_TEXT_RE.search(normalized):
+        return PageTypeDecision(
+            False,
+            "EVENT",
+            "мероприятие, день открытых дверей или семинар вместо клиента",
+            0,
+        )
+
+    if PROMO_TITLE_RE.search(normalized_title):
+        return PageTypeDecision(
+            False,
+            "PROMO",
+            "рекламная акция или временное предложение вместо профиля бизнеса",
+            0,
+        )
+
+    if PROCEDURE_ONLY_TITLE_RE.search(normalized_title) and not explicit_identity:
+        return PageTypeDecision(
+            False,
+            "SERVICE_PAGE",
+            "страница отдельной процедуры без имени специалиста или бизнеса",
+            0,
+        )
+
+    if is_social_post_url(url):
+        if not profile_url:
+            return PageTypeDecision(
+                False,
+                "POST",
+                "публикация не привязана к проверяемому каноническому профилю",
+                0,
+            )
+
+        if not explicit_identity:
+            return PageTypeDecision(
+                False,
+                "POST",
+                "публикация не содержит имени специалиста или названия бизнеса",
+                0,
+            )
+
+        if not direct_contact and identity.generic:
+            return PageTypeDecision(
+                False,
+                "POST",
+                "из публикации нельзя подтвердить конкретного доступного специалиста",
+                0,
+            )
+
+        return PageTypeDecision(
+            True,
+            "PERSON",
+            "публикация приведена к каноническому профилю специалиста",
+            min(identity.max_score, 90),
+            5,
+        )
+
+    if re.match(r"^\s*профиль\s+@", normalized_title):
+        return PageTypeDecision(
+            True,
+            "REVIEW_ONLY",
+            "есть уникальный профиль, но имя специалиста не подтверждено",
+            60,
+            0,
+        )
+
+    if ANONYMOUS_PRIVATE_TITLE_RE.search(normalized_title) and not explicit_identity:
+        return PageTypeDecision(
+            True,
+            "REVIEW_ONLY",
+            "анонимное объявление без подтвержденного имени",
+            45,
+            0,
+        )
+
+    if identity.generic:
+        return PageTypeDecision(
+            True,
+            "REVIEW_ONLY",
+            "страница требует ручной идентификации владельца",
+            min(identity.max_score, 45),
+            0,
+        )
+
+    if CLINIC_TITLE_RE.search(normalized_title):
+        if not direct_contact:
+            return PageTypeDecision(
+                True,
+                "REVIEW_ONLY",
+                "клиника или центр без полного прямого контакта",
+                45,
+                0,
+            )
+
+        return PageTypeDecision(
+            True,
+            "SMALL_BUSINESS",
+            "идентифицирован небольшой бизнес или кабинет",
+            min(identity.max_score, 70),
+            5,
+        )
+
+    if (
+        identity_person
+        or extract_person_name(title, city)
+        or extract_person_name(snippet, city)
+        or HANDLE_RE.search(title or "")
+        or DOCTOR_HANDLE_RE.search(title or "")
+    ):
+        return PageTypeDecision(
+            True,
+            "PERSON",
+            "идентифицирован конкретный специалист",
+            identity.max_score,
+            10,
+        )
+
+    if explicit_identity:
+        return PageTypeDecision(
+            True,
+            "SMALL_BUSINESS",
+            "идентифицировано различимое название бизнеса",
+            identity.max_score,
+            5,
+        )
+
+    return PageTypeDecision(
+        False,
+        "UNKNOWN",
+        "не удалось определить конкретного специалиста или небольшой бизнес",
+        0,
+    )
+
+
 def _custom_exclusion_match(text: str, exclude: str) -> str | None:
     normalized_text = normalize_text(text)
 
@@ -902,10 +1263,25 @@ def assess_candidate_text(
     if not identity.accepted:
         return QualityDecision(False, 0, (identity.reason,))
 
+    page_type = classify_page_type(
+        title=title,
+        snippet=snippet,
+        url=url,
+        niche=niche,
+        city=city,
+        identity=identity,
+    )
+    if not page_type.accepted:
+        return QualityDecision(False, 0, (page_type.reason,))
+
     host = host_of(url)
     city_match = text_matches_city(normalized, city)
     local_signal = bool(SMALL_BUSINESS_RE.search(normalized))
-    action_signal = bool(CONTACT_OR_ACTION_RE.search(normalized))
+    action_signal = bool(
+        CONTACT_OR_ACTION_RE.search(normalized)
+        or extract_valid_phone(combined)
+        or EMAIL_TEXT_RE.search(combined)
+    )
     profile_url = canonical_social_profile_url(url, combined)
     social_profile = bool(profile_url and is_social_host(host))
 
@@ -917,6 +1293,17 @@ def assess_candidate_text(
 
     score += identity.score
     reasons.append(f"{identity.reason} +{identity.score}")
+
+    if page_type.score_bonus:
+        score += page_type.score_bonus
+        reasons.append(
+            f"тип страницы {page_type.page_type}: {page_type.reason} "
+            f"+{page_type.score_bonus}"
+        )
+    else:
+        reasons.append(
+            f"тип страницы {page_type.page_type}: {page_type.reason}"
+        )
 
     if city_match:
         score += 15
@@ -937,10 +1324,12 @@ def assess_candidate_text(
         score += 5
         reasons.append("найден канонический профиль бизнеса +5")
 
-    if score > identity.max_score:
-        score = identity.max_score
+    maximum_score = min(identity.max_score, page_type.max_score)
+
+    if score > maximum_score:
+        score = maximum_score
         reasons.append(
-            f"потолок {identity.max_score}: {identity.reason}"
+            f"потолок {maximum_score}: {page_type.reason}"
         )
 
     accepted = score >= 45 and (local_signal or action_signal or social_profile)

@@ -11,13 +11,13 @@ from app.services.search_quality import (
     SOCIAL_HOSTS,
     assess_identity,
     canonical_social_profile_url,
+    extract_valid_phone,
     is_host_in,
 )
 from app.services.search_service import SearchResult
 
 
 EMAIL_RE = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
-PHONE_RE = re.compile(r"(?:\+?\d[\d\s().-]{7,}\d)")
 
 
 def _host(url: str) -> str:
@@ -27,9 +27,8 @@ def _host(url: str) -> str:
 def result_to_lead(result: SearchResult, req: SearchRequest) -> LeadCreate:
     text = f"{result.title} {result.snippet}".strip()
     email_match = EMAIL_RE.search(text)
-    phone_match = PHONE_RE.search(text)
     email = email_match.group(0) if email_match else None
-    phone = phone_match.group(0) if phone_match else None
+    phone = extract_valid_phone(text)
     lower = text.lower()
     host = _host(result.url)
 
