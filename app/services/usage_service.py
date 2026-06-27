@@ -7,6 +7,8 @@ from sqlalchemy import case, select, update
 from sqlalchemy.orm import Session
 
 from app.models import Plan, Subscription, UsageEvent, UsagePeriod
+from app.services.access_service import get_effective_access
+from app.services.subscription_service import get_active_subscription
 
 
 RESOURCE_FIELDS: dict[str, tuple[str, str]] = {
@@ -31,11 +33,13 @@ class UsageLimitExceeded(UsageError):
 
 @dataclass(frozen=True)
 class UsageReservation:
-    event_id: int
-    usage_period_id: int
+    event_id: int | None
+    usage_period_id: int | None
     resource: str
     amount: int
     already_processed: bool = False
+    bypassed: bool = False
+    access_role: str | None = None
 
 
 def _require_active_subscription(
@@ -196,13 +200,58 @@ def reserve_usage(
     )
 
 
+
+def reserve_user_usage(
+    db: Session,
+    *,
+    user_id: int,
+    resource: str,
+    amount: int = 1,
+    reason: str | None = None,
+    idempotency_key: str | None = None,
+    reservation_minutes: int = 15,
+    now: datetime | None = None,
+) -> UsageReservation:
+    now = now or datetime.utcnow()
+    if amount <= 0:
+        raise UsageError("amount должен быть больше нуля")
+    if resource not in RESOURCE_FIELDS:
+        raise UsageError(f"Неизвестный ресурс: {resource}")
+
+    access = get_effective_access(db, user_id, now=now)
+    if access.unlimited:
+        return UsageReservation(
+            event_id=None,
+            usage_period_id=None,
+            resource=resource,
+            amount=amount,
+            bypassed=True,
+            access_role=access.role,
+        )
+
+    subscription = get_active_subscription(db, user_id, now=now)
+    if subscription is None:
+        raise UsageError("Нет активной подписки")
+    return reserve_usage(
+        db,
+        subscription,
+        resource=resource,
+        amount=amount,
+        reason=reason,
+        idempotency_key=idempotency_key,
+        reservation_minutes=reservation_minutes,
+        now=now,
+    )
+
 def confirm_usage(
     db: Session,
     reservation: UsageReservation,
     *,
     now: datetime | None = None,
-) -> UsageEvent:
+) -> UsageEvent | None:
     now = now or datetime.utcnow()
+    if reservation.bypassed:
+        return None
     event = db.get(UsageEvent, reservation.event_id)
     if event is None:
         raise UsageError("Резервирование не найдено")
@@ -226,8 +275,10 @@ def release_usage(
     *,
     reason: str | None = None,
     now: datetime | None = None,
-) -> UsageEvent:
+) -> UsageEvent | None:
     now = now or datetime.utcnow()
+    if reservation.bypassed:
+        return None
     event = db.get(UsageEvent, reservation.event_id)
     if event is None:
         raise UsageError("Резервирование не найдено")

@@ -311,3 +311,33 @@ class UsageEvent(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+
+
+class AccessGrant(Base):
+    __tablename__ = "access_grants"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    role: Mapped[str] = mapped_column(String(32), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="active", index=True)
+    starts_at: Mapped[datetime] = mapped_column(DateTime, index=True)
+    ends_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    granted_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime, index=True)
+    revoked_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        index=True,
+    )
+    reason: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
