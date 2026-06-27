@@ -17,3 +17,4 @@ discord.py==2.4.0
 
 ddgs==9.14.4
 beautifulsoup4>=4.12,<5
+aiogram==3.29.0
