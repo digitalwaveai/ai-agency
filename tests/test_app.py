@@ -1,8 +1,12 @@
 import os
 
-os.environ.setdefault("DATABASE_URL", "sqlite://")
-os.environ.setdefault("DEMO_MODE", "true")
-os.environ.setdefault("SEARCH_PROVIDER", "demo")
+os.environ["DATABASE_URL"] = "sqlite://"
+os.environ["DEMO_MODE"] = "true"
+os.environ["SEARCH_PROVIDER"] = "demo"
+
+from app.config import get_settings
+
+get_settings.cache_clear()
 
 import pytest
 from fastapi.testclient import TestClient
