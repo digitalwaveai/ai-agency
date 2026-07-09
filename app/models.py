@@ -551,3 +551,149 @@ class AdminNotification(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+# === UNIVERSAL LEAD FINDER CORE: NICHE PROFILES AND QUESTIONNAIRES ===
+
+class NicheCategory(Base):
+    __tablename__ = "niche_categories"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    code: Mapped[str] = mapped_column(String(64), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(120))
+    emoji: Mapped[str | None] = mapped_column(String(16))
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class NicheProfile(Base):
+    __tablename__ = "niche_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    category_id: Mapped[int | None] = mapped_column(
+        ForeignKey("niche_categories.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    code: Mapped[str] = mapped_column(String(80), unique=True, index=True)
+    name: Mapped[str] = mapped_column(String(160))
+    description: Mapped[str] = mapped_column(Text, default="")
+    seller_label: Mapped[str] = mapped_column(String(160), default="Специалист")
+    target_label: Mapped[str] = mapped_column(String(160), default="Потенциальный клиент")
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_custom: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class QuestionnaireTemplate(Base):
+    __tablename__ = "questionnaire_templates"
+    __table_args__ = (
+        UniqueConstraint(
+            "niche_profile_id",
+            "version",
+            name="uq_questionnaire_profile_version",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    niche_profile_id: Mapped[int] = mapped_column(
+        ForeignKey("niche_profiles.id", ondelete="CASCADE"),
+        index=True,
+    )
+    version: Mapped[int] = mapped_column(Integer, default=1)
+    name: Mapped[str] = mapped_column(String(180))
+    intro: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class QuestionnaireQuestion(Base):
+    __tablename__ = "questionnaire_questions"
+    __table_args__ = (
+        UniqueConstraint(
+            "template_id",
+            "question_key",
+            name="uq_questionnaire_question_key",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    template_id: Mapped[int] = mapped_column(
+        ForeignKey("questionnaire_templates.id", ondelete="CASCADE"),
+        index=True,
+    )
+    question_key: Mapped[str] = mapped_column(String(100), index=True)
+    label: Mapped[str] = mapped_column(Text)
+    help_text: Mapped[str] = mapped_column(Text, default="")
+    question_type: Mapped[str] = mapped_column(String(40), default="text", index=True)
+    options_json: Mapped[str] = mapped_column(Text, default="[]")
+    validation_json: Mapped[str] = mapped_column(Text, default="{}")
+    show_if_json: Mapped[str] = mapped_column(Text, default="{}")
+    is_required: Mapped[bool] = mapped_column(Boolean, default=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class UserProject(Base):
+    __tablename__ = "user_projects"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    niche_profile_id: Mapped[int | None] = mapped_column(
+        ForeignKey("niche_profiles.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    name: Mapped[str] = mapped_column(String(180))
+    custom_niche: Mapped[str | None] = mapped_column(String(255), index=True)
+    status: Mapped[str] = mapped_column(String(32), default="draft", index=True)
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class ProjectAnswer(Base):
+    __tablename__ = "project_answers"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "question_key",
+            name="uq_project_answer_question",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("user_projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    question_key: Mapped[str] = mapped_column(String(100), index=True)
+    answer_json: Mapped[str] = mapped_column(Text, default="null")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
