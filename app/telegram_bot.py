@@ -42,6 +42,8 @@ from app.telegram_projects import (
 )
 
 
+from app.telegram_search import router as search_router
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(levelname)s | %(name)s | %(message)s",
@@ -500,6 +502,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
+    dispatcher.include_router(search_router)
     dispatcher.include_router(project_router)
     dispatcher.include_router(router)
 

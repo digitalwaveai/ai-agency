@@ -697,3 +697,45 @@ class ProjectAnswer(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+# === LEADPILOT PROJECT SEARCH: LEADS LINKED TO USER PROJECTS ===
+
+class ProjectLead(Base):
+    __tablename__ = "project_leads"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_id",
+            "lead_id",
+            name="uq_project_lead_project_lead",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    project_id: Mapped[int] = mapped_column(
+        ForeignKey("user_projects.id", ondelete="CASCADE"),
+        index=True,
+    )
+    lead_id: Mapped[int] = mapped_column(
+        ForeignKey("leads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    status: Mapped[str] = mapped_column(String(40), default="found", index=True)
+    search_run_id: Mapped[int | None] = mapped_column(
+        ForeignKey("search_runs.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    found_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        index=True,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )

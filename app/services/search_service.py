@@ -8,6 +8,7 @@ import httpx
 from app.config import get_settings
 from app.schemas import SearchRequest
 from app.services.search_quality import rank_search_results
+from app.services.universal_query_builder import build_search_queries
 
 
 @dataclass
@@ -46,42 +47,7 @@ def _negative_terms(niche: str = "") -> str:
 
 
 def generate_queries(req: SearchRequest) -> list[str]:
-    niche = req.niche.strip()
-    city = req.city.strip()
-    negative = _negative_terms(niche)
-
-    queries = [
-        f"{niche} {city} частный мастер запись {negative}",
-        f'"частный {niche}" "{city}" запись {negative}',
-        f'"{niche}" "{city}" кабинет запись {negative}',
-        f'"{niche}" "{city}" "для записи пишите" {negative}',
-        f'"{niche}" "{city}" запись WhatsApp {negative}',
-        f'"врач-{niche}" "{city}" частный прием {negative}',
-        f'site:vk.com "{niche}" "{city}" запись {negative}',
-        f'site:instagram.com "{niche}" "{city}" запись {negative}',
-    ]
-
-    target = req.target_pain.lower()
-
-    if any(word in target for word in ("прайс", "цен", "публикац", "пост")):
-        queries.extend([
-            f'"{niche}" "{city}" "прайс в постах" {negative}',
-            f'site:vk.com "{niche}" "{city}" прайс запись {negative}',
-        ])
-
-    if any(word in target for word in ("личн", "сообщ", "директ", "whatsapp", "телеграм")):
-        queries.extend([
-            f'"{niche}" "{city}" "запись в личные сообщения" {negative}',
-            f'"{niche}" "{city}" "запись через WhatsApp" {negative}',
-        ])
-
-    if any(word in target for word in ("нет сайта", "без сайта", "соцсет")):
-        queries.extend([
-            f'site:vk.com "{niche}" "{city}" услуги запись {negative}',
-            f'site:t.me "{niche}" "{city}" запись {negative}',
-        ])
-
-    return list(dict.fromkeys(query.strip() for query in queries if query.strip()))
+    return build_search_queries(req)
 
 
 DEMO_RESULTS = [
