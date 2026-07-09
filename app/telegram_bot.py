@@ -25,6 +25,7 @@ from app.services.access_service import (
 )
 from app.services.analytics_service import log_analytics_event
 from app.services.plan_service import seed_default_plans
+from app.services.niche_profile_service import seed_niche_profiles
 from app.services.subscription_service import register_identity
 from app.services.telegram_service import (
     TelegramServiceError,
@@ -34,6 +35,10 @@ from app.services.telegram_service import (
     parse_access_duration,
     register_telegram_account,
     user_leads_count,
+)
+from app.telegram_projects import (
+    leadpilot_main_keyboard,
+    router as project_router,
 )
 
 
@@ -45,27 +50,19 @@ logger = logging.getLogger("beauty_telegram_bot")
 
 router = Router()
 
-BUTTON_SEARCH = "🔎 Найти лидов"
+BUTTON_SEARCH = "🔎 Найти клиентов"
 BUTTON_LEADS = "📋 Мои лиды"
-BUTTON_AUDIT = "💎 Паспорт лида"
+BUTTON_AUDIT = "💎 Анализ клиента"
 BUTTON_MESSAGE = "✉️ Создать сообщение"
-BUTTON_RADARS = "📡 Мои радары"
-BUTTON_LIMITS = "📊 Мои лимиты"
+BUTTON_RADARS = "📡 Радары"
+BUTTON_LIMITS = "📊 Лимиты"
 BUTTON_PLANS = "⭐ Тарифы"
 BUTTON_SUPPORT = "🛟 Поддержка"
+BUTTON_SETTINGS = "⚙️ Настройки"
 
 
 def main_keyboard() -> ReplyKeyboardMarkup:
-    return ReplyKeyboardMarkup(
-        keyboard=[
-            [KeyboardButton(text=BUTTON_SEARCH), KeyboardButton(text=BUTTON_LEADS)],
-            [KeyboardButton(text=BUTTON_AUDIT), KeyboardButton(text=BUTTON_MESSAGE)],
-            [KeyboardButton(text=BUTTON_RADARS), KeyboardButton(text=BUTTON_LIMITS)],
-            [KeyboardButton(text=BUTTON_PLANS), KeyboardButton(text=BUTTON_SUPPORT)],
-        ],
-        resize_keyboard=True,
-        input_field_placeholder="Выберите действие",
-    )
+    return leadpilot_main_keyboard()
 
 
 def _admin_telegram_id() -> str | None:
@@ -182,8 +179,8 @@ async def command_start(message: Message) -> None:
             parameters={"demo_created": account.demo_created},
         )
         text = (
-            "✨ <b>Beauty Lead Finder</b>\n\n"
-            "Поиск и анализ потенциальных клиентов для beauty-бизнеса.\n\n"
+            "✨ <b>LeadPilot AI</b>\n\n"
+            "AI-система поиска клиентов для специалистов и агентств.\n\n"
             + format_account_text(account)
         )
         await message.answer(text, reply_markup=main_keyboard())
@@ -276,14 +273,19 @@ async def show_support(message: Message) -> None:
     await message.answer(_support_text(), reply_markup=main_keyboard())
 
 
+@router.message(F.text == BUTTON_SETTINGS)
+async def placeholder_settings(message: Message) -> None:
+    await _send_placeholder(message, "⚙️ <b>Настройки</b>")
+
+
 @router.message(F.text == BUTTON_SEARCH)
 async def placeholder_search(message: Message) -> None:
-    await _send_placeholder(message, "🔎 <b>Найти лидов</b>")
+    await _send_placeholder(message, "🔎 <b>Найти клиентов</b>")
 
 
 @router.message(F.text == BUTTON_AUDIT)
 async def placeholder_audit(message: Message) -> None:
-    await _send_placeholder(message, "💎 <b>Паспорт лида</b>")
+    await _send_placeholder(message, "💎 <b>Анализ клиента</b>")
 
 
 @router.message(F.text == BUTTON_MESSAGE)
@@ -465,12 +467,14 @@ async def admin_show_user(message: Message) -> None:
 async def set_bot_commands(bot: Bot) -> None:
     await bot.set_my_commands(
         [
-            BotCommand(command="start", description="Открыть Beauty Lead Finder"),
+            BotCommand(command="start", description="Открыть LeadPilot AI"),
             BotCommand(command="menu", description="Главное меню"),
             BotCommand(command="plans", description="Тарифы"),
             BotCommand(command="limits", description="Мои лимиты"),
             BotCommand(command="myid", description="Показать Telegram ID"),
             BotCommand(command="support", description="Поддержка"),
+            BotCommand(command="new_project", description="Создать проект"),
+            BotCommand(command="projects", description="Мои проекты"),
         ]
     )
 
@@ -487,6 +491,7 @@ async def main() -> None:
     db = SessionLocal()
     try:
         seed_default_plans(db)
+        seed_niche_profiles(db)
     finally:
         db.close()
 
@@ -495,6 +500,7 @@ async def main() -> None:
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
     dispatcher = Dispatcher()
+    dispatcher.include_router(project_router)
     dispatcher.include_router(router)
 
     await bot.delete_webhook(drop_pending_updates=False)
