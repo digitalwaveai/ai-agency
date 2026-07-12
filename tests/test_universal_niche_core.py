@@ -75,20 +75,20 @@ def test_universal_tables_registered():
 
 def test_seed_creates_profiles_and_questions(db):
     result = seed_niche_profiles(db)
-    assert result["categories"] == 7
-    assert result["profiles"] == 8
-    assert result["questions"] == 80
-    assert db.scalar(select(func.count(NicheProfile.id))) == 8
-    assert db.scalar(select(func.count(QuestionnaireQuestion.id))) == 80
+    assert result["categories"] == 13
+    assert result["profiles"] == 39
+    assert result["questions"] == 390
+    assert db.scalar(select(func.count(NicheProfile.id))) == 39
+    assert db.scalar(select(func.count(QuestionnaireQuestion.id))) == 390
 
 
 def test_seed_is_idempotent(db):
     seed_niche_profiles(db)
     seed_niche_profiles(db)
-    assert db.scalar(select(func.count(NicheCategory.id))) == 7
-    assert db.scalar(select(func.count(NicheProfile.id))) == 8
-    assert db.scalar(select(func.count(QuestionnaireTemplate.id))) == 8
-    assert db.scalar(select(func.count(QuestionnaireQuestion.id))) == 80
+    assert db.scalar(select(func.count(NicheCategory.id))) == 13
+    assert db.scalar(select(func.count(NicheProfile.id))) == 39
+    assert db.scalar(select(func.count(QuestionnaireTemplate.id))) == 39
+    assert db.scalar(select(func.count(QuestionnaireQuestion.id))) == 390
 
 
 def test_each_profile_has_its_own_questionnaire(db):
@@ -239,5 +239,5 @@ def test_complete_project_after_full_questionnaire(db):
 def test_list_profiles_returns_custom_last(db):
     seed_niche_profiles(db)
     profiles = list_niche_profiles(db)
-    assert len(profiles) == 8
+    assert len(profiles) == 39
     assert profiles[-1].code == "custom_niche"

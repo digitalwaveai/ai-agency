@@ -360,6 +360,16 @@ PROFILE_DEFINITIONS = [
 ]
 
 
+from app.services.niche_profile_catalog_part5 import build_part5_catalog
+
+_part5_categories, _part5_profiles = build_part5_catalog(
+    ProfileDefinition,
+    q,
+)
+CATEGORIES.extend(_part5_categories)
+PROFILE_DEFINITIONS.extend(_part5_profiles)
+
+
 def _json_dumps(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
 

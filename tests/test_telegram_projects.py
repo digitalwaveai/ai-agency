@@ -68,11 +68,13 @@ def make_user(db, suffix="1"):
 
 def test_categories_and_profiles_are_available(db):
     categories = list_categories(db)
-    assert len(categories) == 7
+    assert len(categories) == 13
     beauty = list_profiles_for_category(db, "beauty")
     assert [item.code for item in beauty] == ["beauty_expert"]
     marketing = list_profiles_for_category(db, "marketing")
-    assert {item.code for item in marketing} == {"marketing_strategy", "smm"}
+    assert {"marketing_strategy", "smm"}.issubset(
+        {item.code for item in marketing}
+    )
 
 
 def test_list_projects_is_user_specific(db):

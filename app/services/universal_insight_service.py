@@ -179,6 +179,11 @@ PROFILE_RULES: dict[str, tuple[PainRule, ...]] = {
 }
 
 
+from app.services.niche_profile_catalog_part5 import build_part5_pain_rules
+
+PROFILE_RULES.update(build_part5_pain_rules(PainRule))
+
+
 def clean_text(value: Any) -> str:
     return SPACE_RE.sub(" ", str(value or "")).strip()
 
