@@ -26,6 +26,7 @@ from app.services.project_search_service import (
 from app.services.telegram_project_service import format_project_card
 from app.services.telegram_service import register_telegram_account
 from app.services.usage_service import UsageError, UsageLimitExceeded
+from app.services.universal_insight_service import generate_universal_outreach
 from app.telegram_projects import (
     BUTTON_LEADS,
     BUTTON_SEARCH,
@@ -172,6 +173,7 @@ def format_lead_card(
     lead: Lead,
     *,
     project_name: str | None = None,
+    outreach_message: str | None = None,
 ) -> str:
     lines = [f"🎯 <b>{html.escape(lead.name)}</b>"]
     if project_name:
@@ -196,6 +198,14 @@ def format_lead_card(
                 "",
                 "<b>Что предложить:</b>",
                 html.escape(lead.suggested_offer[:500]),
+            ]
+        )
+    if outreach_message:
+        lines.extend(
+            [
+                "",
+                "<b>Первое сообщение:</b>",
+                html.escape(outreach_message[:1200]),
             ]
         )
     source = _lead_source(lead)
@@ -452,6 +462,10 @@ async def execute_search(
             format_lead_card(
                 lead,
                 project_name=execution.project.name,
+                outreach_message=generate_universal_outreach(
+                    lead,
+                    execution.insight_context,
+                )["short"],
             ),
             disable_web_page_preview=True,
         )

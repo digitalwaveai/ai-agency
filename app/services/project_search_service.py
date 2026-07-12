@@ -43,6 +43,7 @@ class ProjectSearchExecution:
     leads: list[Lead]
     duration_ms: int
     search_run_id: int
+    insight_context: dict[str, Any]
 
 
 def _load_json(value: str | None, default: Any) -> Any:
@@ -197,6 +198,39 @@ def build_project_search_request(
     )
 
 
+
+def build_project_insight_context(
+    db: Session,
+    *,
+    project: UserProject,
+) -> dict[str, Any]:
+    profile = get_project_profile(db, project)
+    answers = get_project_answers(db, project.id)
+    config = _load_json(profile.config_json, {})
+    if not isinstance(config, dict):
+        config = {}
+
+    return {
+        "project_id": project.id,
+        "project_name": project.name,
+        "profile_code": profile.code,
+        "profile_name": profile.name,
+        "custom_niche": project.custom_niche or "",
+        "seller_label": profile.seller_label,
+        "target_label": profile.target_label,
+        "pain_signals": [
+            str(item)
+            for item in config.get("pain_signals", [])
+            if str(item).strip()
+        ],
+        "offer_examples": [
+            str(item)
+            for item in config.get("offer_examples", [])
+            if str(item).strip()
+        ],
+        "answers": answers,
+    }
+
 def list_active_projects(
     db: Session,
     *,
@@ -320,6 +354,10 @@ async def run_project_search(
         location=location,
         limit=limit,
     )
+    insight_context = build_project_insight_context(
+        db,
+        project=project,
+    )
     save_search_location(
         db,
         project_id=project.id,
@@ -352,7 +390,11 @@ async def run_project_search(
             reservation_minutes=30,
         )
 
-        leads = await search_and_save_leads(request, db)
+        leads = await search_and_save_leads(
+            request,
+            db,
+            insight_context=insight_context,
+        )
 
         for lead in leads:
             save_user_lead(

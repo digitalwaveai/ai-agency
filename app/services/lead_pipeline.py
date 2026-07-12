@@ -11,11 +11,16 @@ from app.services.search_quality import offer_is_relevant, pain_is_confirmed
 from app.services.search_service import SearchService
 from app.services.site_enrichment import enrich_leads_from_web
 from app.services.smart_analysis import analyze_and_filter_leads
+from app.services.universal_insight_service import (
+    analyze_universal_lead,
+    score_universal_lead,
+)
 
 
 async def search_and_save_leads(
     req: SearchRequest,
     db: Session,
+    insight_context: dict | None = None,
 ) -> list[Lead]:
     results = await SearchService().search(req)
     lead_inputs = [result_to_lead(result, req) for result in results]
@@ -37,7 +42,19 @@ async def search_and_save_leads(
     qualified = []
 
     for lead_in in lead_inputs:
-        lead_in.score, lead_in.score_reason = score_lead(lead_in, req)
+        if insight_context:
+            lead_in = analyze_universal_lead(
+                lead_in,
+                req,
+                insight_context,
+            )
+            lead_in.score, lead_in.score_reason = score_universal_lead(
+                lead_in,
+                req,
+                insight_context,
+            )
+        else:
+            lead_in.score, lead_in.score_reason = score_lead(lead_in, req)
 
         if lead_in.score < effective_min_score:
             continue
