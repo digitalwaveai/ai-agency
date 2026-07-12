@@ -739,3 +739,64 @@ class ProjectLead(Base):
         default=datetime.utcnow,
         onupdate=datetime.utcnow,
     )
+# === LEADPILOT PART 6: LEAD WORKSPACE AND ACTIVITY HISTORY ===
+
+class LeadWorkspace(Base):
+    __tablename__ = "lead_workspaces"
+    __table_args__ = (
+        UniqueConstraint(
+            "project_lead_id",
+            name="uq_lead_workspace_project_lead",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    project_lead_id: Mapped[int] = mapped_column(
+        ForeignKey("project_leads.id", ondelete="CASCADE"),
+        unique=True,
+        index=True,
+    )
+    note: Mapped[str] = mapped_column(Text, default="")
+    next_follow_up_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
+    last_contacted_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+        index=True,
+    )
+
+
+class LeadActivity(Base):
+    __tablename__ = "lead_activities"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, index=True)
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        index=True,
+    )
+    project_lead_id: Mapped[int] = mapped_column(
+        ForeignKey("project_leads.id", ondelete="CASCADE"),
+        index=True,
+    )
+    activity_type: Mapped[str] = mapped_column(String(40), index=True)
+    old_value: Mapped[str | None] = mapped_column(Text)
+    new_value: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        index=True,
+    )

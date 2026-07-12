@@ -15,6 +15,7 @@ from aiogram.types import (
 )
 
 from app.database import SessionLocal
+from app.telegram_lead_workspace import router as lead_workspace_router
 from app.models import Lead
 from app.services.niche_profile_service import NicheProfileError
 from app.services.project_search_service import (
@@ -35,6 +36,7 @@ from app.telegram_projects import (
 
 
 router = Router(name="leadpilot_search")
+router.include_router(lead_workspace_router)
 
 
 class ProjectSearchFlow(StatesGroup):
