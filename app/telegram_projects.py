@@ -54,6 +54,7 @@ BUTTON_SEARCH = "🔎 Найти клиентов"
 BUTTON_LEADS = "📋 Мои лиды"
 BUTTON_PIPELINE = "📈 Воронка"
 BUTTON_EXPORT = "📤 Экспорт лидов"
+BUTTON_LEAD_ANALYTICS = "\U0001F4CA Аналитика лидов"
 BUTTON_AUDIT = "💎 Анализ клиента"
 BUTTON_MESSAGE = "✉️ Создать сообщение"
 BUTTON_RADARS = "📡 Радары"
@@ -84,6 +85,9 @@ def leadpilot_main_keyboard() -> ReplyKeyboardMarkup:
             [
                 KeyboardButton(text=BUTTON_PIPELINE),
                 KeyboardButton(text=BUTTON_EXPORT),
+            ],
+            [
+                KeyboardButton(text=BUTTON_LEAD_ANALYTICS),
             ],
             [
                 KeyboardButton(text=BUTTON_AUDIT),
