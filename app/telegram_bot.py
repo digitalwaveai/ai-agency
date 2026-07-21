@@ -14,7 +14,9 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     KeyboardButton,
+    LabeledPrice,
     Message,
+    PreCheckoutQuery,
     ReplyKeyboardMarkup,
 )
 from dotenv import load_dotenv
@@ -32,6 +34,7 @@ from app.services.access_service import (
 )
 from app.services.analytics_service import log_analytics_event
 from app.services.plan_service import seed_default_plans
+from app.services.payment_service import PaymentError
 from app.services.pricing_service import (
     PricingError,
     format_owner_pricing_text,
@@ -41,11 +44,26 @@ from app.services.pricing_service import (
 )
 from app.services.niche_profile_service import seed_niche_profiles
 from app.services.subscription_service import register_identity
+from app.services.telegram_stars_service import (
+    PAID_DURATION_MONTHS,
+    PAID_PLAN_CODES,
+    admin_notification_needs_delivery,
+    create_stars_invoice,
+    duration_text,
+    fail_stars_invoice,
+    format_owner_stars_report,
+    format_stars_catalog,
+    list_stars_prices,
+    mark_admin_notification_delivery,
+    plan_name,
+    process_stars_payment,
+    stars_price,
+    validate_stars_checkout,
+)
 from app.services.telegram_service import (
     TelegramServiceError,
     format_account_text,
     format_limits_text,
-    format_plan_catalog,
     parse_access_duration,
     register_telegram_account,
     user_leads_count,
@@ -98,6 +116,64 @@ def _owner_pricing_keyboard(active_profile: str) -> InlineKeyboardMarkup:
     )
 
 
+def _buy_plan_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="⭐ Стандарт",
+                    callback_data="buy_plan:standard",
+                ),
+                InlineKeyboardButton(
+                    text="🚀 Pro",
+                    callback_data="buy_plan:pro",
+                ),
+            ]
+        ]
+    )
+
+
+def _buy_duration_keyboard(
+    plan_code: str,
+    prices: dict[int, int],
+) -> InlineKeyboardMarkup:
+    rows = [
+        [
+            InlineKeyboardButton(
+                text=f"{duration_text(duration)} — {prices[duration]} ⭐",
+                callback_data=f"buy_duration:{plan_code}:{duration}",
+            )
+        ]
+        for duration in PAID_DURATION_MONTHS
+    ]
+    rows.append(
+        [InlineKeyboardButton(text="← К тарифам", callback_data="buy_plans")]
+    )
+    return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def _buy_confirmation_keyboard(
+    plan_code: str,
+    duration_months: int,
+) -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text="Оплатить ⭐",
+                    callback_data=f"buy_pay:{plan_code}:{duration_months}",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text="← Изменить срок",
+                    callback_data=f"buy_plan:{plan_code}",
+                )
+            ],
+        ]
+    )
+
+
 def main_keyboard() -> ReplyKeyboardMarkup:
     return leadpilot_main_keyboard()
 
@@ -129,11 +205,7 @@ def _support_text() -> str:
     )
 
 
-def _ensure_account(message: Message):
-    tg_user = message.from_user
-    if tg_user is None:
-        raise RuntimeError("Telegram-пользователь не определён")
-
+def _ensure_telegram_user(tg_user):
     db = SessionLocal()
     try:
         account = register_telegram_account(
@@ -150,6 +222,13 @@ def _ensure_account(message: Message):
         return account
     finally:
         db.close()
+
+
+def _ensure_account(message: Message):
+    tg_user = message.from_user
+    if tg_user is None:
+        raise RuntimeError("Telegram-пользователь не определён")
+    return _ensure_telegram_user(tg_user)
 
 
 def _log_message_event(
@@ -220,6 +299,122 @@ async def _send_placeholder(message: Message, title: str) -> None:
     )
 
 
+@router.pre_checkout_query()
+async def confirm_stars_checkout(query: PreCheckoutQuery) -> None:
+    try:
+        account = _ensure_telegram_user(query.from_user)
+        db = SessionLocal()
+        try:
+            decision = validate_stars_checkout(
+                db,
+                user_id=account.user.id,
+                invoice_payload=query.invoice_payload,
+                currency=query.currency,
+                total_amount=query.total_amount,
+            )
+        finally:
+            db.close()
+    except Exception:
+        logger.exception("Ошибка проверки платежа Stars")
+        await query.answer(
+            ok=False,
+            error_message="Не удалось проверить счёт. Создайте новый и попробуйте ещё раз.",
+        )
+        return
+
+    await query.answer(
+        ok=decision.ok,
+        error_message=decision.error_message,
+    )
+
+
+@router.message(F.successful_payment)
+async def successful_stars_payment(message: Message) -> None:
+    successful = message.successful_payment
+    if successful is None:
+        return
+    try:
+        account = _ensure_account(message)
+        db = SessionLocal()
+        try:
+            receipt = process_stars_payment(
+                db,
+                user_id=account.user.id,
+                invoice_payload=successful.invoice_payload,
+                currency=successful.currency,
+                total_amount=successful.total_amount,
+                telegram_payment_charge_id=(
+                    successful.telegram_payment_charge_id
+                ),
+                provider_payment_charge_id=(
+                    successful.provider_payment_charge_id
+                ),
+            )
+            owner_report = format_owner_stars_report(db, receipt)
+            notify_owner = admin_notification_needs_delivery(
+                db,
+                payment_id=receipt.payment.id,
+            )
+            payment_id = receipt.payment.id
+        finally:
+            db.close()
+    except Exception as exc:
+        logger.exception("Оплата Stars получена, но активация завершилась ошибкой")
+        _log_message_event(
+            message,
+            event_name="stars_payment_activation_failed",
+            status="error",
+            error_message=str(exc),
+        )
+        await message.answer(
+            "Оплата получена, но подписка не активировалась автоматически. "
+            "Не оплачивайте повторно — напишите в /paysupport."
+        )
+        return
+
+    await message.answer(
+        "✅ <b>Оплата подтверждена</b>\n\n"
+        f"Тариф: <b>{receipt.plan.name}</b>\n"
+        f"Срок: <b>{duration_text(receipt.payment.duration_months)}</b>\n"
+        f"Сумма: <b>{receipt.payment.amount_minor} ⭐</b>\n"
+        f"Активно до: <b>{receipt.subscription.ends_at:%d.%m.%Y %H:%M}</b>\n\n"
+        "Лимиты уже активированы.",
+        reply_markup=main_keyboard(),
+    )
+    _log_message_event(
+        message,
+        event_name="stars_payment_succeeded",
+        parameters={
+            "payment_id": payment_id,
+            "plan_code": receipt.plan.code,
+            "duration_months": receipt.payment.duration_months,
+            "amount": receipt.payment.amount_minor,
+            "duplicate": receipt.duplicate,
+        },
+    )
+
+    owner_id = _owner_telegram_id()
+    if owner_id and notify_owner:
+        sent = False
+        delivery_error = None
+        try:
+            await message.bot.send_message(chat_id=owner_id, text=owner_report)
+            sent = True
+        except Exception as exc:
+            delivery_error = str(exc)
+            logger.exception("Не удалось отправить владельцу отчёт об оплате")
+        db = SessionLocal()
+        try:
+            mark_admin_notification_delivery(
+                db,
+                payment_id=payment_id,
+                sent=sent,
+                error_message=delivery_error,
+            )
+        finally:
+            db.close()
+
+
 @router.message(CommandStart())
 async def command_start(message: Message) -> None:
     try:
@@ -276,11 +471,180 @@ async def show_plans(message: Message) -> None:
     _ensure_account(message)
     db = SessionLocal()
     try:
-        text = format_plan_catalog(db)
+        text = format_stars_catalog(db)
     finally:
         db.close()
     _log_message_event(message, event_name="pricing_viewed", command_name="plans")
-    await message.answer(text, reply_markup=main_keyboard())
+    await message.answer(text, reply_markup=_buy_plan_keyboard())
+
+
+@router.callback_query(F.data == "buy_plans")
+async def choose_purchase_plan(callback: CallbackQuery) -> None:
+    _ensure_telegram_user(callback.from_user)
+    db = SessionLocal()
+    try:
+        text = format_stars_catalog(db)
+    finally:
+        db.close()
+    if callback.message is not None:
+        await callback.message.edit_text(text, reply_markup=_buy_plan_keyboard())
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("buy_plan:"))
+async def choose_purchase_duration(callback: CallbackQuery) -> None:
+    plan_code = (callback.data or "").partition(":")[2]
+    if plan_code not in PAID_PLAN_CODES:
+        await callback.answer("Тариф не найден", show_alert=True)
+        return
+    _ensure_telegram_user(callback.from_user)
+    try:
+        db = SessionLocal()
+        try:
+            prices = list_stars_prices(db, plan_code=plan_code)
+        finally:
+            db.close()
+    except PaymentError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
+    text = (
+        f"⭐ <b>{plan_name(plan_code)}</b>\n\n"
+        "Выберите срок доступа. Оплата разовая, без автопродления:"
+    )
+    if callback.message is not None:
+        await callback.message.edit_text(
+            text,
+            reply_markup=_buy_duration_keyboard(plan_code, prices),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("buy_duration:"))
+async def confirm_purchase(callback: CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in PAID_PLAN_CODES:
+        await callback.answer("Параметры покупки устарели", show_alert=True)
+        return
+    try:
+        duration_months = int(parts[2])
+    except ValueError:
+        await callback.answer("Некорректный срок", show_alert=True)
+        return
+    if duration_months not in PAID_DURATION_MONTHS:
+        await callback.answer("Некорректный срок", show_alert=True)
+        return
+
+    _ensure_telegram_user(callback.from_user)
+    try:
+        db = SessionLocal()
+        try:
+            amount = stars_price(
+                db,
+                plan_code=parts[1],
+                duration_months=duration_months,
+            )
+        finally:
+            db.close()
+    except PaymentError as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+
+    text = (
+        "🧾 <b>Проверьте заказ</b>\n\n"
+        f"Тариф: <b>{plan_name(parts[1])}</b>\n"
+        f"Срок: <b>{duration_text(duration_months)}</b>\n"
+        f"К оплате: <b>{amount} ⭐</b>\n\n"
+        "После оплаты тариф и лимиты активируются автоматически."
+    )
+    if callback.message is not None:
+        await callback.message.edit_text(
+            text,
+            reply_markup=_buy_confirmation_keyboard(
+                parts[1],
+                duration_months,
+            ),
+        )
+    await callback.answer()
+
+
+@router.callback_query(F.data.startswith("buy_pay:"))
+async def send_stars_invoice(callback: CallbackQuery) -> None:
+    parts = (callback.data or "").split(":")
+    if len(parts) != 3 or parts[1] not in PAID_PLAN_CODES:
+        await callback.answer("Параметры покупки устарели", show_alert=True)
+        return
+    try:
+        duration_months = int(parts[2])
+    except ValueError:
+        await callback.answer("Некорректный срок", show_alert=True)
+        return
+    if duration_months not in PAID_DURATION_MONTHS:
+        await callback.answer("Некорректный срок", show_alert=True)
+        return
+
+    await callback.answer("Создаю счёт…")
+    account = _ensure_telegram_user(callback.from_user)
+    db = SessionLocal()
+    try:
+        invoice = create_stars_invoice(
+            db,
+            user_id=account.user.id,
+            telegram_user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            plan_code=parts[1],
+            duration_months=duration_months,
+        )
+    except PaymentError as exc:
+        await callback.bot.send_message(
+            chat_id=callback.from_user.id,
+            text=f"Не удалось создать счёт: {exc}",
+        )
+        return
+    finally:
+        db.close()
+
+    try:
+        await callback.bot.send_invoice(
+            chat_id=callback.from_user.id,
+            title=f"LeadPilot AI — {invoice.plan_name}",
+            description=(
+                f"Разовый доступ на {duration_text(invoice.duration_months)}. "
+                "Без автопродления."
+            ),
+            payload=invoice.invoice_payload,
+            provider_token="",
+            currency="XTR",
+            prices=[
+                LabeledPrice(
+                    label=(
+                        f"{invoice.plan_name}, "
+                        f"{duration_text(invoice.duration_months)}"
+                    ),
+                    amount=invoice.amount,
+                )
+            ],
+            start_parameter=f"stars_{invoice.payment_id}",
+            protect_content=True,
+        )
+    except Exception as exc:
+        logger.exception("Telegram не создал счёт Stars")
+        db = SessionLocal()
+        try:
+            fail_stars_invoice(
+                db,
+                invoice_payload=invoice.invoice_payload,
+                error_message=str(exc),
+            )
+        finally:
+            db.close()
+        await callback.bot.send_message(
+            chat_id=callback.from_user.id,
+            text=(
+                "Не удалось отправить счёт. Попробуйте снова через раздел "
+                "«Тарифы» или напишите в /paysupport."
+            ),
+        )
 
 
 @router.message(Command("limits"))
@@ -317,6 +681,7 @@ async def show_user_leads(message: Message) -> None:
     )
 
 
+@router.message(Command("paysupport"))
 @router.message(Command("support"))
 @router.message(F.text == BUTTON_SUPPORT)
 async def show_support(message: Message) -> None:
@@ -752,6 +1117,7 @@ async def set_bot_commands(bot: Bot) -> None:
             BotCommand(command="menu", description="Главное меню"),
             BotCommand(command="plans", description="Тарифы"),
             BotCommand(command="limits", description="Мои лимиты"),
+            BotCommand(command="paysupport", description="Поддержка по оплате"),
             BotCommand(command="myid", description="Показать Telegram ID"),
             BotCommand(command="support", description="Поддержка"),
             BotCommand(command="new_project", description="Создать проект"),
