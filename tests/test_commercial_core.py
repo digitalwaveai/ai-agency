@@ -7,11 +7,12 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import Base
 from app.models import Plan, PlanPrice, Subscription, UsageEvent, UsagePeriod, UserIdentity
-from app.services.plan_service import get_plan_by_code, seed_default_plans
+from app.services.plan_service import seed_default_plans
 from app.services.subscription_service import (
     SubscriptionError,
     activate_demo_subscription,
     activate_subscription,
+    activate_trial_subscription,
     register_identity,
 )
 from app.services.usage_service import (
@@ -62,10 +63,13 @@ def test_commercial_tables_registered():
 
 def test_default_plans_and_prices(db):
     plans = db.scalars(select(Plan).order_by(Plan.code)).all()
-    assert [plan.code for plan in plans] == ["agency", "demo", "pro", "solo"]
-    assert db.scalar(select(Plan).where(Plan.code == "pro")).searches_limit == 120
-    assert db.scalar(select(PlanPrice).where(PlanPrice.price_rub == 57490)).duration_months == 12
-    assert len(db.scalars(select(PlanPrice)).all()) == 12
+    assert [plan.code for plan in plans] == ["pro", "standard", "trial"]
+    assert db.scalar(select(Plan).where(Plan.code == "trial")).saved_leads_limit == 20
+    assert db.scalar(select(Plan).where(Plan.code == "standard")).saved_leads_limit == 100
+    assert db.scalar(select(Plan).where(Plan.code == "pro")).saved_leads_limit == 500
+    assert db.scalar(select(PlanPrice).where(PlanPrice.price_rub == 9990)).duration_months == 12
+    assert db.scalar(select(PlanPrice).where(PlanPrice.price_rub == 24990)).duration_months == 12
+    assert len(db.scalars(select(PlanPrice)).all()) == 8
 
 
 def test_register_identity_is_idempotent(db):
@@ -95,7 +99,7 @@ def test_activate_paid_subscription(db):
     subscription = activate_subscription(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=3,
         source="manual",
         now=now,
@@ -105,11 +109,32 @@ def test_activate_paid_subscription(db):
     assert subscription.next_usage_reset_at == now + timedelta(days=30)
 
 
-def test_demo_can_only_be_activated_once(db):
+def test_legacy_solo_alias_activates_standard(db):
+    user = register_identity(db, platform="telegram", external_user_id="legacy")
+    subscription = activate_subscription(
+        db,
+        user_id=user.id,
+        plan_code="solo",
+        duration_months=1,
+    )
+    plan = db.get(Plan, subscription.plan_id)
+    assert plan.code == "standard"
+
+
+def test_trial_is_seven_days_and_only_once(db):
     user = register_identity(db, platform="discord", external_user_id="777")
-    activate_demo_subscription(db, user_id=user.id)
-    with pytest.raises(SubscriptionError, match="Demo уже использован"):
-        activate_demo_subscription(db, user_id=user.id)
+    now = datetime(2026, 7, 1, 12, 0, 0)
+    trial = activate_trial_subscription(db, user_id=user.id, now=now)
+    assert trial.ends_at == now + timedelta(days=7)
+    with pytest.raises(SubscriptionError, match="Пробный период уже использован"):
+        activate_trial_subscription(db, user_id=user.id, now=now)
+
+
+def test_old_demo_function_activates_new_trial(db):
+    user = register_identity(db, platform="telegram", external_user_id="demo-alias")
+    subscription = activate_demo_subscription(db, user_id=user.id)
+    plan = db.get(Plan, subscription.plan_id)
+    assert plan.code == "trial"
 
 
 def test_reserve_confirm_and_snapshot(db):
@@ -118,7 +143,7 @@ def test_reserve_confirm_and_snapshot(db):
     subscription = activate_subscription(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         now=now,
     )
@@ -131,7 +156,7 @@ def test_reserve_confirm_and_snapshot(db):
     )
     confirm_usage(db, reservation, now=now)
     snapshot = usage_snapshot(db, subscription, now=now)
-    assert snapshot["searches"] == {"used": 1, "limit": 30, "remaining": 29}
+    assert snapshot["searches"] == {"used": 1, "limit": 100, "remaining": 99}
 
 
 def test_idempotency_does_not_double_charge(db):
@@ -140,7 +165,7 @@ def test_idempotency_does_not_double_charge(db):
     subscription = activate_subscription(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         now=now,
     )
@@ -163,15 +188,15 @@ def test_idempotency_does_not_double_charge(db):
     assert usage_snapshot(db, subscription, now=now)["audits"]["used"] == 1
 
 
-def test_limit_cannot_be_exceeded(db):
+def test_trial_limit_cannot_be_exceeded(db):
     user = register_identity(db, platform="telegram", external_user_id="303")
     now = datetime(2026, 7, 1, 12, 0, 0)
-    subscription = activate_demo_subscription(db, user_id=user.id, now=now)
-    first = reserve_usage(db, subscription, resource="searches", now=now)
+    subscription = activate_trial_subscription(db, user_id=user.id, now=now)
+    first = reserve_usage(db, subscription, resource="saved_leads", amount=20, now=now)
     confirm_usage(db, first, now=now)
     with pytest.raises(UsageLimitExceeded):
-        reserve_usage(db, subscription, resource="searches", now=now)
-    assert usage_snapshot(db, subscription, now=now)["searches"]["used"] == 1
+        reserve_usage(db, subscription, resource="saved_leads", now=now)
+    assert usage_snapshot(db, subscription, now=now)["saved_leads"]["used"] == 20
 
 
 def test_release_returns_limit(db):
@@ -180,7 +205,7 @@ def test_release_returns_limit(db):
     subscription = activate_subscription(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         now=now,
     )
@@ -196,7 +221,7 @@ def test_expired_reservation_is_released(db):
     subscription = activate_subscription(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         now=now,
     )
@@ -212,7 +237,7 @@ def test_expired_reservation_is_released(db):
     assert usage_snapshot(db, subscription, now=now + timedelta(minutes=2))["searches"]["used"] == 0
 
 
-def test_new_usage_period_after_thirty_days(db):
+def test_limits_reset_every_thirty_days_for_long_subscription(db):
     user = register_identity(db, platform="telegram", external_user_id="606")
     start = datetime(2026, 7, 1, 12, 0, 0)
     subscription = activate_subscription(
@@ -222,10 +247,12 @@ def test_new_usage_period_after_thirty_days(db):
         duration_months=3,
         now=start,
     )
-    first = reserve_usage(db, subscription, resource="searches", now=start)
+    first = reserve_usage(db, subscription, resource="saved_leads", amount=500, now=start)
     confirm_usage(db, first, now=start)
+    assert usage_snapshot(db, subscription, now=start)["saved_leads"]["remaining"] == 0
 
     second_period_time = start + timedelta(days=31)
     snapshot = usage_snapshot(db, subscription, now=second_period_time)
-    assert snapshot["searches"]["used"] == 0
+    assert snapshot["saved_leads"] == {"used": 0, "limit": 500, "remaining": 500}
     assert len(db.scalars(select(UsagePeriod)).all()) == 2
+    assert subscription.next_usage_reset_at == start + timedelta(days=60)

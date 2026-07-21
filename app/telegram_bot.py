@@ -10,6 +10,9 @@ from aiogram.enums import ParseMode
 from aiogram.filters import Command, CommandStart
 from aiogram.types import (
     BotCommand,
+    CallbackQuery,
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
     KeyboardButton,
     Message,
     ReplyKeyboardMarkup,
@@ -18,13 +21,24 @@ from dotenv import load_dotenv
 
 from app.database import SessionLocal, init_db
 from app.services.access_service import (
+    AccessError,
+    ensure_owner_access,
     find_user_by_identity,
     get_effective_access,
+    grant_admin_by_owner,
     grant_beta_access,
     revoke_access,
+    revoke_admin_by_owner,
 )
 from app.services.analytics_service import log_analytics_event
 from app.services.plan_service import seed_default_plans
+from app.services.pricing_service import (
+    PricingError,
+    format_owner_pricing_text,
+    get_pricing_state,
+    set_active_pricing_profile,
+    set_profile_price,
+)
 from app.services.niche_profile_service import seed_niche_profiles
 from app.services.subscription_service import register_identity
 from app.services.telegram_service import (
@@ -63,13 +77,39 @@ BUTTON_SUPPORT = "🛟 Поддержка"
 BUTTON_SETTINGS = "⚙️ Настройки"
 
 
+def _owner_pricing_keyboard(active_profile: str) -> InlineKeyboardMarkup:
+    production_prefix = "✅ " if active_profile == "production" else ""
+    test_prefix = "✅ " if active_profile == "test" else ""
+    return InlineKeyboardMarkup(
+        inline_keyboard=[
+            [
+                InlineKeyboardButton(
+                    text=f"{production_prefix}💳 Рабочие цены",
+                    callback_data="owner_prices:production",
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    text=f"{test_prefix}🧪 Тестовые цены",
+                    callback_data="owner_prices:test",
+                )
+            ],
+        ]
+    )
+
+
 def main_keyboard() -> ReplyKeyboardMarkup:
     return leadpilot_main_keyboard()
 
 
-def _admin_telegram_id() -> str | None:
-    value = os.getenv("ADMIN_TELEGRAM_ID")
+def _owner_telegram_id() -> str | None:
+    value = os.getenv("OWNER_TELEGRAM_ID") or os.getenv("ADMIN_TELEGRAM_ID")
     return value.strip() if value and value.strip() else None
+
+
+def _admin_telegram_id() -> str | None:
+    # Compatibility with the existing Telegram registration service.
+    return _owner_telegram_id()
 
 
 def _support_text() -> str:
@@ -96,7 +136,7 @@ def _ensure_account(message: Message):
 
     db = SessionLocal()
     try:
-        return register_telegram_account(
+        account = register_telegram_account(
             db,
             telegram_id=tg_user.id,
             username=tg_user.username,
@@ -104,6 +144,10 @@ def _ensure_account(message: Message):
             last_name=tg_user.last_name,
             admin_telegram_id=_admin_telegram_id(),
         )
+        owner_id = _owner_telegram_id()
+        if owner_id and str(tg_user.id) == owner_id:
+            ensure_owner_access(db, user_id=account.user.id)
+        return account
     finally:
         db.close()
 
@@ -151,8 +195,14 @@ def _log_message_event(
 
 def _is_owner_admin(message: Message) -> bool:
     tg_user = message.from_user
-    configured = _admin_telegram_id()
+    configured = _owner_telegram_id()
     return bool(tg_user and configured and str(tg_user.id) == configured)
+
+
+def _owner_internal_user_id(message: Message) -> int:
+    if not _is_owner_admin(message):
+        raise AccessError("Команда доступна только владельцу")
+    return _ensure_account(message).user.id
 
 
 async def _send_placeholder(message: Message, title: str) -> None:
@@ -300,18 +350,247 @@ async def placeholder_radars(message: Message) -> None:
     await _send_placeholder(message, "📡 <b>Мои радары</b>")
 
 
+@router.message(Command("owner_prices"))
+async def owner_prices(message: Message) -> None:
+    if not _is_owner_admin(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+
+    _owner_internal_user_id(message)
+    db = SessionLocal()
+    try:
+        state = get_pricing_state(db)
+        text = format_owner_pricing_text(db)
+    finally:
+        db.close()
+    await message.answer(
+        text,
+        reply_markup=_owner_pricing_keyboard(state.active_profile),
+    )
+
+
+@router.callback_query(F.data.startswith("owner_prices:"))
+async def owner_switch_prices(callback: CallbackQuery) -> None:
+    configured_owner = _owner_telegram_id()
+    if not configured_owner or str(callback.from_user.id) != configured_owner:
+        await callback.answer("Доступно только владельцу", show_alert=True)
+        return
+
+    profile_code = (callback.data or "").partition(":")[2]
+    db = SessionLocal()
+    try:
+        owner = register_identity(
+            db,
+            platform="telegram",
+            external_user_id=callback.from_user.id,
+            username=callback.from_user.username,
+            first_name=callback.from_user.first_name,
+            last_name=callback.from_user.last_name,
+        )
+        ensure_owner_access(db, user_id=owner.id)
+        state = set_active_pricing_profile(
+            db,
+            owner_user_id=owner.id,
+            profile_code=profile_code,
+        )
+        text = format_owner_pricing_text(db)
+    except (PricingError, AccessError) as exc:
+        await callback.answer(str(exc), show_alert=True)
+        return
+    finally:
+        db.close()
+
+    if callback.message is not None:
+        await callback.message.edit_text(
+            text,
+            reply_markup=_owner_pricing_keyboard(state.active_profile),
+        )
+    await callback.answer("Режим цен изменён")
+
+
+@router.message(Command("owner_price_set"))
+async def owner_set_price(message: Message) -> None:
+    if not _is_owner_admin(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 6:
+        await message.answer(
+            "Формат:\n"
+            "<code>/owner_price_set РЕЖИМ ТАРИФ МЕСЯЦЫ ВАЛЮТА СУММА</code>\n\n"
+            "Примеры:\n"
+            "<code>/owner_price_set production standard 1 RUB 990</code>\n"
+            "<code>/owner_price_set production pro 1 XTR 2450</code>\n\n"
+            "Для RUB сумма указывается в рублях, для XTR — в Stars."
+        )
+        return
+
+    _, profile_code, plan_code, duration_text, currency, amount_text = parts
+    try:
+        duration_months = int(duration_text)
+        display_amount = int(amount_text)
+        if display_amount <= 0:
+            raise ValueError
+    except ValueError:
+        await message.answer("Месяцы и сумма должны быть положительными целыми числами.")
+        return
+
+    currency = currency.upper()
+    amount_minor = display_amount * 100 if currency == "RUB" else display_amount
+    try:
+        owner_user_id = _owner_internal_user_id(message)
+        db = SessionLocal()
+        try:
+            set_profile_price(
+                db,
+                owner_user_id=owner_user_id,
+                profile_code=profile_code,
+                plan_code=plan_code,
+                duration_months=duration_months,
+                currency=currency,
+                amount_minor=amount_minor,
+            )
+            state = get_pricing_state(db)
+            text = format_owner_pricing_text(db)
+        finally:
+            db.close()
+    except (PricingError, AccessError) as exc:
+        await message.answer(f"Ошибка: {exc}")
+        return
+
+    await message.answer(
+        "✅ Цена сохранена\n\n" + text,
+        reply_markup=_owner_pricing_keyboard(state.active_profile),
+    )
+
+
 @router.message(Command("admin_help"))
 async def admin_help(message: Message) -> None:
     if not _is_owner_admin(message):
         await message.answer("Команда доступна только владельцу.")
         return
     await message.answer(
-        "🛠 <b>Административные команды</b>\n\n"
-        "<code>/admin_beta TELEGRAM_ID 30</code>\n"
+        "👑 <b>Команды владельца</b>\n\n"
+        "<code>/owner_admin TELEGRAM_ID</code> — бессрочный Admin\n"
+        "<code>/owner_admin TELEGRAM_ID 30</code> — Admin на 30 дней\n"
+        "<code>/owner_revoke_admin TELEGRAM_ID</code> — снять Admin\n"
+        "<code>/admin_beta TELEGRAM_ID 30</code> — Beta Tester\n"
         "<code>/admin_beta TELEGRAM_ID unlimited</code>\n"
-        "<code>/admin_user TELEGRAM_ID</code>\n"
-        "<code>/admin_revoke_beta TELEGRAM_ID</code>"
+        "<code>/admin_revoke_beta TELEGRAM_ID</code>\n"
+        "<code>/admin_user TELEGRAM_ID</code> — проверить доступ\n\n"
+        "<code>/owner_prices</code> — рабочие/тестовые цены\n"
+        "<code>/owner_price_set ...</code> — изменить цену\n\n"
+        "Владелец и Admin не расходуют лимиты. "
+        "Только владелец может назначать и снимать Admin."
     )
+
+
+@router.message(Command("owner_admin"))
+async def owner_grant_admin(message: Message) -> None:
+    if not _is_owner_admin(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) not in {2, 3}:
+        await message.answer(
+            "Формат:\n"
+            "<code>/owner_admin TELEGRAM_ID</code>\n"
+            "или\n"
+            "<code>/owner_admin TELEGRAM_ID 30</code>"
+        )
+        return
+
+    external_id = parts[1].strip()
+    try:
+        duration_days = None if len(parts) == 2 else parse_access_duration(parts[2])
+        owner_user_id = _owner_internal_user_id(message)
+        db = SessionLocal()
+        try:
+            target = register_identity(
+                db,
+                platform="telegram",
+                external_user_id=external_id,
+            )
+            grant = grant_admin_by_owner(
+                db,
+                owner_user_id=owner_user_id,
+                target_user_id=target.id,
+                duration_days=duration_days,
+                reason="Выдано владельцем через Telegram",
+            )
+            expires = (
+                "бессрочно"
+                if grant.ends_at is None
+                else grant.ends_at.strftime("%d.%m.%Y %H:%M")
+            )
+        finally:
+            db.close()
+    except (AccessError, TelegramServiceError) as exc:
+        await message.answer(f"Ошибка: {exc}")
+        return
+
+    _log_message_event(
+        message,
+        event_name="admin_access_granted",
+        command_name="owner_admin",
+        parameters={
+            "target_telegram_id": external_id,
+            "duration_days": duration_days,
+        },
+    )
+    await message.answer(
+        "✅ <b>Admin назначен</b>\n\n"
+        f"Telegram ID: <code>{external_id}</code>\n"
+        f"Лимиты: <b>отключены</b>\n"
+        f"Действует до: <b>{expires}</b>"
+    )
+
+
+@router.message(Command("owner_revoke_admin"))
+async def owner_revoke_admin(message: Message) -> None:
+    if not _is_owner_admin(message):
+        await message.answer("Команда доступна только владельцу.")
+        return
+
+    parts = (message.text or "").split()
+    if len(parts) != 2:
+        await message.answer(
+            "Формат:\n"
+            "<code>/owner_revoke_admin TELEGRAM_ID</code>"
+        )
+        return
+
+    external_id = parts[1].strip()
+    try:
+        owner_user_id = _owner_internal_user_id(message)
+        db = SessionLocal()
+        try:
+            target = find_user_by_identity(
+                db,
+                platform="telegram",
+                external_user_id=external_id,
+            )
+            count = 0 if target is None else revoke_admin_by_owner(
+                db,
+                owner_user_id=owner_user_id,
+                target_user_id=target.id,
+                reason="Снято владельцем через Telegram",
+            )
+        finally:
+            db.close()
+    except AccessError as exc:
+        await message.answer(f"Ошибка: {exc}")
+        return
+
+    _log_message_event(
+        message,
+        event_name="admin_access_revoked",
+        command_name="owner_revoke_admin",
+        parameters={"target_telegram_id": external_id, "revoked": count},
+    )
+    await message.answer(f"Снято активных Admin-доступов: <b>{count}</b>")
 
 
 @router.message(Command("admin_beta"))
@@ -494,6 +773,19 @@ async def main() -> None:
     try:
         seed_default_plans(db)
         seed_niche_profiles(db)
+        owner_id = _owner_telegram_id()
+        if owner_id:
+            owner_user = register_identity(
+                db,
+                platform="telegram",
+                external_user_id=owner_id,
+                display_name="LeadPilot AI Owner",
+            )
+            ensure_owner_access(db, user_id=owner_user.id)
+        else:
+            logger.warning(
+                "OWNER_TELEGRAM_ID не задан; используется только обычный доступ"
+            )
     finally:
         db.close()
 

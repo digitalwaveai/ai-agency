@@ -217,7 +217,7 @@ def format_plan_catalog(db: Session) -> str:
     plans = list(
         db.scalars(
             select(Plan)
-            .where(Plan.code.in_(("solo", "pro", "agency")))
+            .where(Plan.code.in_(("standard", "pro", "agency")))
             .order_by(Plan.id)
         ).all()
     )

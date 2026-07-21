@@ -52,7 +52,7 @@ def _require_active_subscription(
     if subscription.starts_at > now or subscription.ends_at <= now:
         raise UsageError("Срок подписки не активен")
     plan = db.get(Plan, subscription.plan_id)
-    if plan is None or not plan.is_active:
+    if plan is None:
         raise UsageError("Тариф подписки недоступен")
     return plan
 
@@ -88,6 +88,8 @@ def get_or_create_usage_period(
         )
     )
     if period is not None:
+        subscription.next_usage_reset_at = period.period_end
+        db.flush()
         return period
 
     period = UsagePeriod(
@@ -97,6 +99,7 @@ def get_or_create_usage_period(
         period_end=period_end,
     )
     db.add(period)
+    subscription.next_usage_reset_at = period_end
     db.flush()
     return period
 

@@ -20,6 +20,8 @@ from aiogram.types import (
 from aiogram.utils.keyboard import InlineKeyboardBuilder
 
 from app.database import SessionLocal
+from app.services.access_service import ensure_owner_access
+from app.services.entitlement_service import EntitlementError, ensure_project_capacity
 from app.models import UserProject
 from app.services.niche_profile_service import (
     NicheProfileError,
@@ -108,9 +110,14 @@ def leadpilot_main_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def _admin_telegram_id() -> str | None:
-    value = os.getenv("ADMIN_TELEGRAM_ID")
+def _owner_telegram_id() -> str | None:
+    value = os.getenv("OWNER_TELEGRAM_ID") or os.getenv("ADMIN_TELEGRAM_ID")
     return value.strip() if value and value.strip() else None
+
+
+def _admin_telegram_id() -> str | None:
+    # Backward-compatible argument for register_telegram_account.
+    return _owner_telegram_id()
 
 
 def _ensure_telegram_user_id(tg_user: TelegramUser) -> int:
@@ -125,6 +132,9 @@ def _ensure_telegram_user_id(tg_user: TelegramUser) -> int:
             last_name=tg_user.last_name,
             admin_telegram_id=_admin_telegram_id(),
         )
+        owner_id = _owner_telegram_id()
+        if owner_id and str(tg_user.id) == owner_id:
+            ensure_owner_access(db, user_id=account.user.id)
         return account.user.id
     finally:
         db.close()
@@ -313,6 +323,7 @@ async def _create_project_after_name(
 
     db = SessionLocal()
     try:
+        ensure_project_capacity(db, user_id=user_id)
         project = create_user_project(
             db,
             user_id=user_id,
@@ -320,6 +331,13 @@ async def _create_project_after_name(
             profile_code=profile_code,
             custom_niche=custom_niche,
         )
+    except EntitlementError as exc:
+        await state.clear()
+        await message.answer(
+            f"⛔ <b>Проект не создан</b>\n\n{html.escape(str(exc))}",
+            reply_markup=leadpilot_main_keyboard(),
+        )
+        return
     finally:
         db.close()
 

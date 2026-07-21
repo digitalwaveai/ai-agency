@@ -104,20 +104,20 @@ def test_pending_payment_is_idempotent(db):
     first = create_pending_payment(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-1",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     second = create_pending_payment(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-1",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     assert first.id == second.id
     assert db.scalar(select(func.count(Payment.id))) == 1
@@ -153,7 +153,7 @@ def test_successful_payment_activates_subscription(db):
         duration_months=3,
         provider="website",
         external_payment_id="pay-2",
-        amount_minor=1709000,
+        amount_minor=699000,
     )
     processed, event = process_successful_payment(
         db,
@@ -175,11 +175,11 @@ def test_repeated_success_does_not_duplicate_subscription(db):
     create_pending_payment(
         db,
         user_id=user.id,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-3",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     first, _ = process_successful_payment(
         db,
@@ -201,11 +201,11 @@ def test_unlinked_paid_payment_waits_for_activation(db):
     payment = create_pending_payment(
         db,
         user_id=None,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-4",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     processed, _ = process_successful_payment(
         db,
@@ -228,7 +228,7 @@ def test_activation_token_links_payment_and_activates(db):
         duration_months=1,
         provider="website",
         external_payment_id="pay-5",
-        amount_minor=599000,
+        amount_minor=249000,
     )
     process_successful_payment(
         db,
@@ -250,11 +250,11 @@ def test_activation_token_cannot_be_used_twice(db):
     payment = create_pending_payment(
         db,
         user_id=None,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-6",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     process_successful_payment(
         db,
@@ -273,11 +273,11 @@ def test_activation_token_expires(db):
     payment = create_pending_payment(
         db,
         user_id=None,
-        plan_code="solo",
+        plan_code="standard",
         duration_months=1,
         provider="website",
         external_payment_id="pay-7",
-        amount_minor=249000,
+        amount_minor=99000,
     )
     now = datetime(2026, 7, 1, 12, 0, 0)
     process_successful_payment(

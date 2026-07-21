@@ -218,6 +218,67 @@ class PlanPrice(Base):
     )
 
 
+class PricingSettings(Base):
+    """Single-row switch selecting the price profile used for new invoices."""
+
+    __tablename__ = "pricing_settings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, default=1)
+    active_profile: Mapped[str] = mapped_column(
+        String(32),
+        default="production",
+        index=True,
+    )
+    updated_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
+class PricingProfilePrice(Base):
+    """Editable prices for production and test payment profiles.
+
+    ``amount_minor`` is expressed in the smallest unit accepted by the payment
+    provider: kopecks for RUB and whole Stars for XTR.
+    """
+
+    __tablename__ = "pricing_profile_prices"
+    __table_args__ = (
+        UniqueConstraint(
+            "profile_code",
+            "plan_id",
+            "duration_months",
+            "currency",
+            name="uq_pricing_profile_plan_duration_currency",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    profile_code: Mapped[str] = mapped_column(String(32), index=True)
+    plan_id: Mapped[int] = mapped_column(
+        ForeignKey("plans.id", ondelete="CASCADE"),
+        index=True,
+    )
+    duration_months: Mapped[int] = mapped_column(Integer, index=True)
+    currency: Mapped[str] = mapped_column(String(12), index=True)
+    amount_minor: Mapped[int] = mapped_column(Integer)
+    discount_percent: Mapped[int] = mapped_column(Integer, default=0)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, index=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+
 class Subscription(Base):
     __tablename__ = "subscriptions"
 

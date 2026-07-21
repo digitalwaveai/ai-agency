@@ -6,74 +6,77 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Plan, PlanPrice
+from app.services.pricing_service import (
+    PRODUCTION_RUB_PRICES,
+    seed_pricing_profiles,
+)
 
+
+PAID_DURATION_MONTHS = (1, 3, 6, 12)
+LEGACY_PLAN_CODES = {"demo", "solo", "agency"}
+PURCHASE_PLAN_ALIASES = {
+    "solo": "standard",
+    "agency": "pro",
+}
+
+PLAN_PROJECT_LIMITS: dict[str, int | None] = {
+    "trial": 1,
+    "standard": 3,
+    "pro": 10,
+    # Compatibility for already-active legacy subscriptions.
+    "demo": 1,
+    "solo": 3,
+    "agency": 30,
+}
 
 PLAN_CATALOG: tuple[dict[str, Any], ...] = (
     {
-        "code": "demo",
-        "name": "Demo",
-        "description": "Однократная бесплатная проба",
-        "searches_limit": 1,
-        "saved_leads_limit": 5,
-        "audits_limit": 1,
-        "messages_limit": 3,
+        "code": "trial",
+        "name": "Пробный",
+        "description": "7 дней бесплатно, чтобы проверить весь LeadPilot AI",
+        "searches_limit": 20,
+        "saved_leads_limit": 20,
+        "audits_limit": 20,
+        "messages_limit": 20,
         "radars_limit": 0,
-        "export_enabled": False,
-        "analytics_enabled": False,
+        "export_enabled": True,
+        "analytics_enabled": True,
         "prices": {},
     },
     {
-        "code": "solo",
-        "name": "Solo",
-        "description": "Для специалиста или небольшой студии",
-        "searches_limit": 30,
-        "saved_leads_limit": 150,
-        "audits_limit": 20,
-        "messages_limit": 60,
-        "radars_limit": 2,
-        "export_enabled": False,
-        "analytics_enabled": False,
+        "code": "standard",
+        "name": "Стандарт",
+        "description": "Для фрилансеров, экспертов и небольших команд",
+        "searches_limit": 100,
+        "saved_leads_limit": 100,
+        "audits_limit": 100,
+        "messages_limit": 100,
+        "radars_limit": 3,
+        "export_enabled": True,
+        "analytics_enabled": True,
         "prices": {
-            1: (2490, 0),
-            3: (7090, 5),
-            6: (13490, 10),
-            12: (23990, 20),
+            duration: (amount_minor // 100, discount)
+            for duration, (amount_minor, discount) in PRODUCTION_RUB_PRICES[
+                "standard"
+            ].items()
         },
     },
     {
         "code": "pro",
         "name": "Pro",
-        "description": "Основной тариф для активного поиска клиентов",
-        "searches_limit": 120,
-        "saved_leads_limit": 700,
-        "audits_limit": 100,
-        "messages_limit": 300,
+        "description": "Для активного поиска клиентов и нескольких направлений",
+        "searches_limit": 500,
+        "saved_leads_limit": 500,
+        "audits_limit": 500,
+        "messages_limit": 500,
         "radars_limit": 10,
         "export_enabled": True,
         "analytics_enabled": True,
         "prices": {
-            1: (5990, 0),
-            3: (17090, 5),
-            6: (32390, 10),
-            12: (57490, 20),
-        },
-    },
-    {
-        "code": "agency",
-        "name": "Agency",
-        "description": "Для агентств и активных отделов продаж",
-        "searches_limit": 400,
-        "saved_leads_limit": 2500,
-        "audits_limit": 300,
-        "messages_limit": 1000,
-        "radars_limit": 30,
-        "export_enabled": True,
-        "analytics_enabled": True,
-        "prices": {
-            1: (11990, 0),
-            3: (34190, 5),
-            6: (64790, 10),
-            12: (114990, 20),
+            duration: (amount_minor // 100, discount)
+            for duration, (amount_minor, discount) in PRODUCTION_RUB_PRICES[
+                "pro"
+            ].items()
         },
     },
 )
@@ -81,6 +84,11 @@ PLAN_CATALOG: tuple[dict[str, Any], ...] = (
 
 def get_plan_by_code(db: Session, code: str) -> Plan | None:
     return db.scalar(select(Plan).where(Plan.code == code.strip().lower()))
+
+
+def normalize_purchase_plan_code(code: str) -> str:
+    normalized = code.strip().lower()
+    return PURCHASE_PLAN_ALIASES.get(normalized, normalized)
 
 
 def get_plan_price(
@@ -97,7 +105,24 @@ def get_plan_price(
     )
 
 
+def get_project_limit(plan_code: str) -> int | None:
+    return PLAN_PROJECT_LIMITS.get(plan_code.strip().lower())
+
+
 def seed_default_plans(db: Session, *, commit: bool = True) -> list[Plan]:
+    """Create the current catalog and retire legacy plans for new purchases.
+
+    Legacy plan rows are kept for history and existing subscriptions. Their
+    prices are disabled, while usage for already-active subscriptions remains
+    valid in usage_service.
+    """
+
+    legacy_plans = db.scalars(select(Plan).where(Plan.code.in_(LEGACY_PLAN_CODES))).all()
+    for plan in legacy_plans:
+        plan.is_active = False
+        for price in db.scalars(select(PlanPrice).where(PlanPrice.plan_id == plan.id)).all():
+            price.is_active = False
+
     seeded: list[Plan] = []
 
     for item in PLAN_CATALOG:
@@ -121,6 +146,14 @@ def seed_default_plans(db: Session, *, commit: bool = True) -> list[Plan]:
         plan.is_active = True
         db.flush()
 
+        desired_durations = set(item["prices"])
+        existing_prices = db.scalars(
+            select(PlanPrice).where(PlanPrice.plan_id == plan.id)
+        ).all()
+        for existing in existing_prices:
+            if existing.duration_months not in desired_durations:
+                existing.is_active = False
+
         for duration_months, (price_rub, discount_percent) in item["prices"].items():
             price = db.scalar(
                 select(PlanPrice).where(
@@ -140,6 +173,10 @@ def seed_default_plans(db: Session, *, commit: bool = True) -> list[Plan]:
             price.is_active = True
 
         seeded.append(plan)
+
+    # Price profiles are seeded only once. Later owner edits are preserved and
+    # the selected profile is re-applied after every restart.
+    seed_pricing_profiles(db, commit=False)
 
     if commit:
         db.commit()

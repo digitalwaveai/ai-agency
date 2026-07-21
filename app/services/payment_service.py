@@ -17,7 +17,15 @@ from app.models import (
     Plan,
     User,
 )
-from app.services.plan_service import get_plan_by_code, get_plan_price
+from app.services.plan_service import (
+    get_plan_by_code,
+    get_plan_price,
+    normalize_purchase_plan_code,
+)
+from app.services.pricing_service import (
+    get_active_profile_price,
+    get_pricing_state,
+)
 from app.services.subscription_service import activate_subscription
 
 
@@ -78,18 +86,41 @@ def create_pending_payment(
             raise PaymentError("Внешний ID уже используется другим платежом")
         return existing
 
-    plan = get_plan_by_code(db, plan_code)
-    if plan is None or not plan.is_active or plan.code == "demo":
+    plan = get_plan_by_code(db, normalize_purchase_plan_code(plan_code))
+    if plan is None or not plan.is_active or plan.code in {"trial", "demo"}:
         raise PaymentError("Платный тариф не найден или отключён")
     price = get_plan_price(db, plan, duration_months)
     if price is None:
         raise PaymentError("Для тарифа нет такой длительности")
 
-    expected_minor = price.price_rub * 100
-    if validate_rub_amount and currency == "RUB" and amount_minor != expected_minor:
+    profile_price = get_active_profile_price(
+        db,
+        plan_code=plan.code,
+        duration_months=duration_months,
+        currency=currency,
+    )
+    if profile_price is None:
         raise PaymentError(
-            f"Неверная сумма: ожидалось {expected_minor} копеек"
+            f"Цена {currency} для тарифа и срока не настроена"
         )
+
+    expected_minor = profile_price.amount_minor
+    should_validate = currency != "RUB" or validate_rub_amount
+    if should_validate and amount_minor != expected_minor:
+        raise PaymentError(
+            f"Неверная сумма: ожидалось {expected_minor} {currency}"
+        )
+
+    pricing_state = get_pricing_state(db)
+    metadata_payload = dict(metadata or {})
+    metadata_payload["_pricing"] = {
+        "profile": pricing_state.active_profile,
+        "profile_price_id": profile_price.id,
+        "plan_code": plan.code,
+        "duration_months": duration_months,
+        "currency": currency,
+        "configured_amount_minor": expected_minor,
+    }
 
     payment = Payment(
         user_id=user_id,
@@ -102,7 +133,7 @@ def create_pending_payment(
         currency=currency,
         duration_months=duration_months,
         description=description,
-        metadata_json=_json_dumps(metadata),
+        metadata_json=_json_dumps(metadata_payload),
         created_at=now,
         updated_at=now,
     )

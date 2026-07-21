@@ -64,7 +64,7 @@ def test_first_start_creates_demo(db):
     )
     assert account.demo_created is True
     assert account.plan is not None
-    assert account.plan.code == "demo"
+    assert account.plan.code == "trial"
     assert account.access.role == "customer"
 
 
@@ -109,19 +109,16 @@ def test_beta_tester_keeps_unlimited_access_without_demo(db):
 
 def test_plan_catalog_contains_all_paid_plans_and_prices(db):
     text = format_plan_catalog(db)
-    assert "Solo" in text
+    assert "Стандарт" in text
     assert "Pro" in text
-    assert "Agency" in text
-    assert "2 490 ₽" in text
-    assert "57 490 ₽" in text
-    assert "114 990 ₽" in text
-
+    assert "990 ₽" in text
+    assert "24 990 ₽" in text
 
 def test_limits_text_for_demo_and_admin(db):
     customer = register_telegram_account(db, telegram_id=10004)
     customer_text = format_limits_text(db, customer.user.id)
-    assert "Demo" in customer_text
-    assert "0 / 1" in customer_text
+    assert "Пробный" in customer_text
+    assert "0 / 20" in customer_text
 
     admin = register_telegram_account(
         db,
