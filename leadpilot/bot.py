@@ -6,13 +6,23 @@ import io
 import logging
 import re
 
-from telegram import InputFile, ReplyKeyboardMarkup, ReplyKeyboardRemove, Update
+from telegram import (
+    InlineKeyboardButton,
+    InlineKeyboardMarkup,
+    InputFile,
+    LabeledPrice,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+    Update,
+)
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    PreCheckoutQueryHandler,
     filters,
 )
 
@@ -52,6 +62,27 @@ BUTTON_PLANS = "⭐ Тарифы"
 BUTTON_SETTINGS = "⚙️ Настройки"
 BUTTON_SUPPORT = "🛟 Поддержка"
 
+MENU_BUTTONS = (
+    BUTTON_NEW_PROJECT,
+    BUTTON_PROJECTS,
+    BUTTON_SEARCH,
+    BUTTON_LEADS,
+    BUTTON_PIPELINE,
+    BUTTON_EXPORT,
+    BUTTON_ANALYTICS,
+    BUTTON_ANALYZE,
+    BUTTON_MESSAGE,
+    BUTTON_RADARS,
+    BUTTON_LIMITS,
+    BUTTON_PLANS,
+    BUTTON_SETTINGS,
+    BUTTON_SUPPORT,
+)
+MENU_BUTTON_PATTERN = rf"^(?:{'|'.join(re.escape(item) for item in MENU_BUTTONS)})$"
+USER_INPUT_FILTER = (
+    filters.TEXT & ~filters.COMMAND & ~filters.Regex(MENU_BUTTON_PATTERN)
+)
+
 MENU = ReplyKeyboardMarkup(
     [
         [BUTTON_NEW_PROJECT, BUTTON_PROJECTS],
@@ -67,23 +98,68 @@ MENU = ReplyKeyboardMarkup(
     input_field_placeholder="Выберите действие",
 )
 
+STAR_TARIFFS = {
+    ("standard", 1): ("Стандарт", 500),
+    ("standard", 3): ("Стандарт", 1400),
+    ("standard", 6): ("Стандарт", 2700),
+    ("standard", 12): ("Стандарт", 5000),
+    ("pro", 1): ("Pro", 1250),
+    ("pro", 3): ("Pro", 3500),
+    ("pro", 6): ("Pro", 6750),
+    ("pro", 12): ("Pro", 12500),
+}
+
+PLAN_LIMITS = {
+    "trial": (20, 20, 20, 20, 0),
+    "standard": (100, 100, 100, 100, 3),
+    "pro": (500, 500, 500, 500, 10),
+}
+
 TARIFFS_TEXT = (
     "⭐ Тарифы LeadPilot AI\n\n"
     "🎁 Пробный — 7 дней бесплатно\n"
     "20 поисков · 20 лидов · 20 анализов · 20 сообщений\n\n"
     "⭐ Стандарт\n"
     "100 поисков · 100 лидов · 100 анализов · 100 сообщений · 3 радара\n"
-    "1 месяц — 990 ₽\n"
-    "3 месяца — 2 790 ₽\n"
-    "6 месяцев — 5 390 ₽\n"
-    "12 месяцев — 9 990 ₽\n\n"
+    "1 месяц — 990 ₽ или 500 ⭐\n"
+    "3 месяца — 2 790 ₽ или 1 400 ⭐\n"
+    "6 месяцев — 5 390 ₽ или 2 700 ⭐\n"
+    "12 месяцев — 9 990 ₽ или 5 000 ⭐\n\n"
     "🚀 Pro\n"
     "500 поисков · 500 лидов · 500 анализов · 500 сообщений · 10 радаров\n"
-    "1 месяц — 2 490 ₽\n"
-    "3 месяца — 6 990 ₽\n"
-    "6 месяцев — 13 490 ₽\n"
-    "12 месяцев — 24 990 ₽\n\n"
-    "Оплата разовая, без автопродления."
+    "1 месяц — 2 490 ₽ или 1 250 ⭐\n"
+    "3 месяца — 6 990 ₽ или 3 500 ⭐\n"
+    "6 месяцев — 13 490 ₽ или 6 750 ⭐\n"
+    "12 месяцев — 24 990 ₽ или 12 500 ⭐\n\n"
+    "Оплата разовая, без автопродления.\n"
+    "Для оплаты звёздами выберите вариант ниже."
+)
+
+STAR_PAYMENT_KEYBOARD = InlineKeyboardMarkup(
+    [
+        [
+            InlineKeyboardButton(
+                f"Стандарт {months} мес. · {stars:,} ⭐".replace(",", " "),
+                callback_data=f"buy:standard:{months}",
+            )
+        ]
+        for months, (_, stars) in (
+            (months, STAR_TARIFFS[("standard", months)])
+            for months in (1, 3, 6, 12)
+        )
+    ]
+    + [
+        [
+            InlineKeyboardButton(
+                f"Pro {months} мес. · {stars:,} ⭐".replace(",", " "),
+                callback_data=f"buy:pro:{months}",
+            )
+        ]
+        for months, (_, stars) in (
+            (months, STAR_TARIFFS[("pro", months)])
+            for months in (1, 3, 6, 12)
+        )
+    ]
 )
 
 
@@ -102,36 +178,73 @@ class LeadPilotBot:
             settings.openai_api_key, settings.openai_model
         )
 
-    def authorized(self, update: Update) -> bool:
+    def ensure_account(self, update: Update) -> None:
+        user = update.effective_user
+        if not user:
+            return
+        self.db.ensure_account(
+            user.id,
+            username=user.username or "",
+            first_name=user.first_name or "",
+        )
+
+    def is_admin(self, update: Update) -> bool:
         owner_id = self.settings.owner_telegram_id
         user = update.effective_user
-        return bool(user and (owner_id is None or user.id == owner_id))
+        return bool(user and owner_id is not None and user.id == owner_id)
+
+    def authorized(self, update: Update) -> bool:
+        user = update.effective_user
+        if not user:
+            return False
+        self.ensure_account(update)
+        if self.is_admin(update):
+            return True
+        return bool(self.db.get_access_state(user.id)["active"])
 
     async def reject(self, update: Update) -> int:
         if update.effective_message:
             await update.effective_message.reply_text(
-                f"Доступ ограничен. Поддержка: {self.settings.support_username}"
+                "Пробный или оплаченный доступ не активен.\n"
+                "Откройте «⭐ Тарифы» для оплаты или «🛟 Поддержка», "
+                "если доступ уже оплачен.",
+                reply_markup=MENU,
             )
         return ConversationHandler.END
 
     async def start(self, update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-        if not self.authorized(update):
-            await self.reject(update)
-            return
+        self.ensure_account(update)
         user = update.effective_user
-        is_admin = bool(
-            user
-            and (
-                self.settings.owner_telegram_id is None
-                or user.id == self.settings.owner_telegram_id
+        is_admin = self.is_admin(update)
+        access = self.db.get_access_state(user.id)
+        if is_admin:
+            account_text = (
+                "👤 Ваш аккаунт\n\n"
+                "Роль: Администратор\n"
+                "Доступ: без лимитов тарифа\n"
+                "Срок: бессрочно"
             )
-        )
-        account_text = (
-            "👤 Ваш аккаунт\n\n"
-            f"Роль: {'Администратор' if is_admin else 'Клиент'}\n"
-            f"Доступ: {'без лимитов тарифа' if is_admin else 'пробный тариф'}\n"
-            f"Срок: {'бессрочно' if is_admin else '7 дней'}"
-        )
+        elif access["active"] and access["source"] == "stars":
+            account_text = (
+                "👤 Ваш аккаунт\n\n"
+                "Роль: Клиент\n"
+                f"Тариф: {access['plan_name']}\n"
+                f"Оплачен до: {access['ends_at'].strftime('%d.%m.%Y')}"
+            )
+        elif access["active"]:
+            account_text = (
+                "👤 Ваш аккаунт\n\n"
+                "Роль: Клиент\n"
+                "Доступ: пробный тариф\n"
+                f"Пробный период до: {access['ends_at'].strftime('%d.%m.%Y')}"
+            )
+        else:
+            account_text = (
+                "👤 Ваш аккаунт\n\n"
+                "Роль: Клиент\n"
+                "Доступ: не активен\n"
+                "Откройте «⭐ Тарифы» для выбора тарифа."
+            )
         await update.effective_message.reply_text(
             "✨ LeadPilot AI\n\n"
             "AI-система поиска клиентов для специалистов и агентств.\n\n"
@@ -162,6 +275,7 @@ class LeadPilotBot:
     ) -> int:
         if not self.authorized(update):
             return await self.reject(update)
+        context.user_data.clear()
         await update.effective_message.reply_text(
             "🔎 Найти клиентов\n\n"
             "Какую нишу или тип компаний ищем?\n"
@@ -278,6 +392,7 @@ class LeadPilotBot:
     ) -> int:
         if not self.authorized(update):
             return await self.reject(update)
+        context.user_data.clear()
         await update.effective_message.reply_text(
             "➕ Новый проект\n\n"
             "Как назвать проект?\n"
@@ -367,6 +482,7 @@ class LeadPilotBot:
     ) -> int:
         if not self.authorized(update):
             return await self.reject(update)
+        context.user_data.clear()
         leads = await asyncio.to_thread(
             self.db.list_leads, update.effective_user.id, 10
         )
@@ -408,6 +524,7 @@ class LeadPilotBot:
     ) -> int:
         if not self.authorized(update):
             return await self.reject(update)
+        context.user_data.clear()
         leads = await asyncio.to_thread(
             self.db.list_leads, update.effective_user.id, 10
         )
@@ -490,6 +607,7 @@ class LeadPilotBot:
     ) -> int:
         if not self.authorized(update):
             return await self.reject(update)
+        context.user_data.clear()
         radars = await asyncio.to_thread(
             self.db.list_radars, update.effective_user.id, 10
         )
@@ -799,24 +917,168 @@ class LeadPilotBot:
     async def show_limits(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        if not self.authorized(update):
-            await self.reject(update)
+        self.ensure_account(update)
+        if self.is_admin(update):
+            await update.effective_message.reply_text(
+                "📊 Ваши лимиты\n\n"
+                "Роль: Администратор\n"
+                "Лимиты тарифа: не применяются\n"
+                "Срок доступа: бессрочно",
+                reply_markup=MENU,
+            )
             return
+
+        access = self.db.get_access_state(update.effective_user.id)
+        if not access["active"]:
+            await update.effective_message.reply_text(
+                "📊 Ваши лимиты\n\n"
+                "Активного тарифа нет.\n"
+                "Откройте «⭐ Тарифы», чтобы продолжить работу.",
+                reply_markup=MENU,
+            )
+            return
+
+        searches, leads, analyses, messages, radars = PLAN_LIMITS[
+            access["plan_code"]
+        ]
         await update.effective_message.reply_text(
             "📊 Ваши лимиты\n\n"
-            "Роль: Администратор\n"
-            "Лимиты тарифа: не применяются\n"
-            "Срок доступа: бессрочно",
+            f"Тариф: {access['plan_name']}\n"
+            f"Действует до: {access['ends_at'].strftime('%d.%m.%Y')}\n\n"
+            f"Поиски: {searches}\n"
+            f"Лиды: {leads}\n"
+            f"Анализы: {analyses}\n"
+            f"Сообщения: {messages}\n"
+            f"Радары: {radars}",
             reply_markup=MENU,
         )
 
     async def show_plans(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        if not self.authorized(update):
-            await self.reject(update)
-            return
+        self.ensure_account(update)
         await update.effective_message.reply_text(TARIFFS_TEXT, reply_markup=MENU)
+        await update.effective_message.reply_text(
+            "Выберите тариф и срок для оплаты Telegram Stars:",
+            reply_markup=STAR_PAYMENT_KEYBOARD,
+        )
+
+    async def select_star_payment(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not query.from_user:
+            return
+        await query.answer()
+        self.db.ensure_account(
+            query.from_user.id,
+            username=query.from_user.username or "",
+            first_name=query.from_user.first_name or "",
+        )
+        try:
+            _, plan_code, months_raw = (query.data or "").split(":")
+            months = int(months_raw)
+            plan_name, stars = STAR_TARIFFS[(plan_code, months)]
+        except (ValueError, KeyError):
+            await query.message.reply_text(
+                "Не удалось определить тариф. Откройте «⭐ Тарифы» ещё раз.",
+                reply_markup=MENU,
+            )
+            return
+
+        payload = f"leadpilot|{plan_code}|{months}|{query.from_user.id}"
+        await context.bot.send_invoice(
+            chat_id=query.message.chat_id,
+            title=f"LeadPilot {plan_name} — {months} мес.",
+            description=(
+                f"Доступ к тарифу {plan_name} на {months} мес. "
+                "Разовая оплата без автопродления."
+            ),
+            payload=payload,
+            currency="XTR",
+            prices=[LabeledPrice(f"{plan_name}, {months} мес.", stars)],
+        )
+
+    async def precheckout(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.pre_checkout_query
+        if not query:
+            return
+        parsed = self._parse_payment_payload(query.invoice_payload)
+        if not parsed:
+            await query.answer(
+                ok=False,
+                error_message="Счёт не относится к LeadPilot. Создайте новый.",
+            )
+            return
+        plan_code, months, user_id = parsed
+        expected = STAR_TARIFFS.get((plan_code, months))
+        valid = bool(
+            expected
+            and query.from_user.id == user_id
+            and query.currency == "XTR"
+            and query.total_amount == expected[1]
+        )
+        if not valid:
+            await query.answer(
+                ok=False,
+                error_message="Параметры счёта изменились. Создайте новый счёт.",
+            )
+            return
+        await query.answer(ok=True)
+
+    async def successful_payment(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.effective_message
+        payment = message.successful_payment if message else None
+        user = update.effective_user
+        if not payment or not user:
+            return
+        parsed = self._parse_payment_payload(payment.invoice_payload)
+        if not parsed:
+            logging.error("Unknown successful payment payload")
+            await message.reply_text(
+                "Платёж получен, но тариф не распознан. "
+                f"Напишите в поддержку: {self.settings.support_username}",
+                reply_markup=MENU,
+            )
+            return
+        plan_code, months, payload_user_id = parsed
+        expected = STAR_TARIFFS.get((plan_code, months))
+        if (
+            not expected
+            or payload_user_id != user.id
+            or payment.currency != "XTR"
+            or payment.total_amount != expected[1]
+        ):
+            logging.error("Successful payment validation failed")
+            await message.reply_text(
+                "Платёж получен, но его параметры не совпали со счётом. "
+                f"Напишите в поддержку: {self.settings.support_username}",
+                reply_markup=MENU,
+            )
+            return
+
+        plan_name, stars = expected
+        ends_at = await asyncio.to_thread(
+            self.db.record_star_payment,
+            user.id,
+            plan_code,
+            months,
+            stars,
+            payment.telegram_payment_charge_id,
+            payment.provider_payment_charge_id,
+        )
+        await message.reply_text(
+            "✅ Оплата подтверждена\n\n"
+            f"Тариф: {plan_name}\n"
+            f"Срок: {months} мес.\n"
+            f"Оплачено: {stars:,} ⭐\n".replace(",", " ")
+            + f"Доступ действует до: {ends_at.strftime('%d.%m.%Y')}",
+            reply_markup=MENU,
+        )
 
     async def show_settings(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
@@ -838,15 +1100,28 @@ class LeadPilotBot:
     async def show_support(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        if not self.authorized(update):
-            await self.reject(update)
-            return
+        self.ensure_account(update)
+        username = self.settings.support_username.lstrip("@")
+        support_keyboard = (
+            InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "Написать в Telegram",
+                            url=f"https://t.me/{username}",
+                        )
+                    ]
+                ]
+            )
+            if username
+            else None
+        )
         await update.effective_message.reply_text(
             "🛟 Поддержка\n\n"
             f"Telegram: {self.settings.support_username}\n"
             f"Email: {self.settings.support_email}\n\n"
             "Не отправляйте токены, пароли и данные банковских карт.",
-            reply_markup=MENU,
+            reply_markup=support_keyboard or MENU,
         )
 
     async def show_help(
@@ -873,6 +1148,64 @@ class LeadPilotBot:
             reply_markup=MENU,
         )
 
+    async def navigate_menu(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        context.user_data.clear()
+        handlers = {
+            BUTTON_NEW_PROJECT: self.new_project_start,
+            BUTTON_PROJECTS: self.list_projects,
+            BUTTON_SEARCH: self.find_start,
+            BUTTON_LEADS: self.list_leads,
+            BUTTON_PIPELINE: self.show_pipeline,
+            BUTTON_EXPORT: self.export_leads,
+            BUTTON_ANALYTICS: self.show_analytics,
+            BUTTON_ANALYZE: self.analyze_start,
+            BUTTON_MESSAGE: self.message_start,
+            BUTTON_RADARS: self.radar_start,
+            BUTTON_LIMITS: self.show_limits,
+            BUTTON_PLANS: self.show_plans,
+            BUTTON_SETTINGS: self.show_settings,
+            BUTTON_SUPPORT: self.show_support,
+        }
+        handler = handlers.get(update.effective_message.text or "")
+        if not handler:
+            return ConversationHandler.END
+        result = await handler(update, context)
+        return result if isinstance(result, int) else ConversationHandler.END
+
+    async def navigate_command(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> int:
+        context.user_data.clear()
+        raw_command = (update.effective_message.text or "").split(maxsplit=1)[0]
+        command = raw_command.lstrip("/").split("@", maxsplit=1)[0].lower()
+        handlers = {
+            "start": self.start,
+            "menu": self.menu,
+            "status": self.status,
+            "new_project": self.new_project_start,
+            "projects": self.list_projects,
+            "find": self.find_start,
+            "leads": self.list_leads,
+            "message": self.message_start,
+            "analyze": self.analyze_start,
+            "radars": self.radar_start,
+            "radar_run": self.radar_run,
+            "export": self.export_leads,
+            "analytics": self.show_analytics,
+            "plans": self.show_plans,
+            "limits": self.show_limits,
+            "support": self.show_support,
+            "help": self.show_help,
+            "lead_status": self.lead_status,
+        }
+        handler = handlers.get(command)
+        if not handler:
+            return ConversationHandler.END
+        result = await handler(update, context)
+        return result if isinstance(result, int) else ConversationHandler.END
+
     async def cancel(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> int:
@@ -897,6 +1230,18 @@ class LeadPilotBot:
         return list(dict.fromkeys(values))
 
     @staticmethod
+    def _parse_payment_payload(payload: str) -> tuple[str, int, int] | None:
+        try:
+            prefix, plan_code, months_raw, user_id_raw = payload.split("|")
+            months = int(months_raw)
+            user_id = int(user_id_raw)
+        except (ValueError, AttributeError):
+            return None
+        if prefix != "leadpilot" or (plan_code, months) not in STAR_TARIFFS:
+            return None
+        return plan_code, months, user_id
+
+    @staticmethod
     def format_leads(leads: list[Lead]) -> str:
         blocks: list[str] = []
         for lead in leads:
@@ -919,142 +1264,119 @@ class LeadPilotBot:
         application = (
             Application.builder().token(self.settings.telegram_bot_token).build()
         )
-        cancel_fallback = [CommandHandler("cancel", self.cancel)]
+        application.add_handler(
+            CallbackQueryHandler(
+                self.select_star_payment,
+                pattern=r"^buy:(?:standard|pro):(?:1|3|6|12)$",
+            )
+        )
+        application.add_handler(PreCheckoutQueryHandler(self.precheckout))
+        application.add_handler(
+            MessageHandler(filters.SUCCESSFUL_PAYMENT, self.successful_payment)
+        )
 
+        navigation_commands = (
+            "start",
+            "menu",
+            "status",
+            "new_project",
+            "projects",
+            "find",
+            "leads",
+            "message",
+            "analyze",
+            "radars",
+            "radar_run",
+            "export",
+            "analytics",
+            "plans",
+            "limits",
+            "support",
+            "help",
+            "lead_status",
+        )
         application.add_handler(
             ConversationHandler(
                 entry_points=[
                     CommandHandler("find", self.find_start),
+                    CommandHandler("new_project", self.new_project_start),
+                    CommandHandler("message", self.message_start),
+                    CommandHandler("analyze", self.analyze_start),
+                    CommandHandler("radars", self.radar_start),
                     MessageHandler(
                         filters.Regex(_button_pattern(BUTTON_SEARCH)),
                         self.find_start,
                     ),
-                ],
-                states={
-                    SEARCH_NICHE: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_niche,
-                        )
-                    ],
-                    SEARCH_REGION: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_region,
-                        )
-                    ],
-                    SEARCH_LIMIT: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_limit,
-                        )
-                    ],
-                },
-                fallbacks=cancel_fallback,
-            )
-        )
-        application.add_handler(
-            ConversationHandler(
-                entry_points=[
-                    CommandHandler("new_project", self.new_project_start),
                     MessageHandler(
                         filters.Regex(_button_pattern(BUTTON_NEW_PROJECT)),
                         self.new_project_start,
                     ),
-                ],
-                states={
-                    PROJECT_NAME: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_project_name,
-                        )
-                    ],
-                    PROJECT_NICHE: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_project_niche,
-                        )
-                    ],
-                    PROJECT_REGION: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_project_region,
-                        )
-                    ],
-                },
-                fallbacks=cancel_fallback,
-            )
-        )
-        application.add_handler(
-            ConversationHandler(
-                entry_points=[
-                    CommandHandler("message", self.message_start),
                     MessageHandler(
                         filters.Regex(_button_pattern(BUTTON_MESSAGE)),
                         self.message_start,
                     ),
-                ],
-                states={
-                    MESSAGE_LEAD_ID: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_lead_id,
-                        )
-                    ]
-                },
-                fallbacks=cancel_fallback,
-            )
-        )
-        application.add_handler(
-            ConversationHandler(
-                entry_points=[
-                    CommandHandler("analyze", self.analyze_start),
                     MessageHandler(
                         filters.Regex(_button_pattern(BUTTON_ANALYZE)),
                         self.analyze_start,
                     ),
-                ],
-                states={
-                    ANALYZE_LEAD_ID: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_analyze_lead_id,
-                        )
-                    ]
-                },
-                fallbacks=cancel_fallback,
-            )
-        )
-        application.add_handler(
-            ConversationHandler(
-                entry_points=[
-                    CommandHandler("radars", self.radar_start),
                     MessageHandler(
                         filters.Regex(_button_pattern(BUTTON_RADARS)),
                         self.radar_start,
                     ),
                 ],
                 states={
+                    SEARCH_NICHE: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_niche)
+                    ],
+                    SEARCH_REGION: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_region)
+                    ],
+                    SEARCH_LIMIT: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_limit)
+                    ],
+                    PROJECT_NAME: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_project_name)
+                    ],
+                    PROJECT_NICHE: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_project_niche)
+                    ],
+                    PROJECT_REGION: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_project_region)
+                    ],
+                    MESSAGE_LEAD_ID: [
+                        MessageHandler(USER_INPUT_FILTER, self.receive_lead_id)
+                    ],
+                    ANALYZE_LEAD_ID: [
+                        MessageHandler(
+                            USER_INPUT_FILTER, self.receive_analyze_lead_id
+                        )
+                    ],
                     RADAR_NICHES: [
                         MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_radar_niches,
+                            USER_INPUT_FILTER, self.receive_radar_niches
                         )
                     ],
                     RADAR_REGIONS: [
                         MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_radar_regions,
+                            USER_INPUT_FILTER, self.receive_radar_regions
                         )
                     ],
                     RADAR_LIMIT: [
-                        MessageHandler(
-                            filters.TEXT & ~filters.COMMAND,
-                            self.receive_radar_limit,
-                        )
+                        MessageHandler(USER_INPUT_FILTER, self.receive_radar_limit)
                     ],
                 },
-                fallbacks=cancel_fallback,
+                fallbacks=[
+                    CommandHandler("cancel", self.cancel),
+                    MessageHandler(
+                        filters.Regex(MENU_BUTTON_PATTERN),
+                        self.navigate_menu,
+                    ),
+                    CommandHandler(
+                        navigation_commands,
+                        self.navigate_command,
+                    ),
+                ],
+                allow_reentry=True,
             )
         )
 
