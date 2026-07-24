@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -83,10 +84,45 @@ class Database:
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """
+        accounts_statement = """
+            CREATE TABLE IF NOT EXISTS user_accounts (
+                user_id BIGINT PRIMARY KEY,
+                username TEXT NOT NULL DEFAULT '',
+                first_name TEXT NOT NULL DEFAULT '',
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        payments_statement = """
+            CREATE TABLE IF NOT EXISTS star_payments (
+                telegram_payment_charge_id TEXT PRIMARY KEY,
+                provider_payment_charge_id TEXT NOT NULL DEFAULT '',
+                user_id BIGINT NOT NULL,
+                plan_code TEXT NOT NULL,
+                duration_months INTEGER NOT NULL,
+                amount_stars INTEGER NOT NULL,
+                paid_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """
+        subscriptions_statement = f"""
+            CREATE TABLE IF NOT EXISTS subscriptions (
+                id {id_column},
+                user_id BIGINT NOT NULL,
+                plan_code TEXT NOT NULL,
+                starts_at TIMESTAMP NOT NULL,
+                ends_at TIMESTAMP NOT NULL,
+                source TEXT NOT NULL DEFAULT 'stars',
+                payment_charge_id TEXT NOT NULL UNIQUE,
+                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+        """
         with self._connect() as connection:
             connection.execute(leads_statement)
             connection.execute(projects_statement)
             connection.execute(radars_statement)
+            connection.execute(accounts_statement)
+            connection.execute(payments_statement)
+            connection.execute(subscriptions_statement)
             if self.is_postgres:
                 connection.execute(
                     "ALTER TABLE leads "
@@ -103,6 +139,174 @@ class Database:
                         "ADD COLUMN status TEXT NOT NULL DEFAULT 'new'"
                     )
             connection.commit()
+
+    def ensure_account(
+        self,
+        user_id: int,
+        *,
+        username: str = "",
+        first_name: str = "",
+    ) -> None:
+        statement = self._sql(
+            """
+            INSERT INTO user_accounts (user_id, username, first_name)
+            VALUES (?, ?, ?)
+            ON CONFLICT(user_id) DO UPDATE SET
+                username = excluded.username,
+                first_name = excluded.first_name,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )
+        with self._connect() as connection:
+            connection.execute(statement, (user_id, username, first_name))
+            connection.commit()
+
+    def get_access_state(self, user_id: int) -> dict[str, Any]:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        subscription_statement = self._sql(
+            """
+            SELECT plan_code, ends_at, source
+            FROM subscriptions
+            WHERE user_id = ? AND starts_at <= ? AND ends_at > ?
+            ORDER BY ends_at DESC
+            LIMIT 1
+            """
+        )
+        account_statement = self._sql(
+            """
+            SELECT created_at
+            FROM user_accounts
+            WHERE user_id = ?
+            """
+        )
+        with self._connect() as connection:
+            subscription = connection.execute(
+                subscription_statement,
+                (user_id, self._db_datetime(now), self._db_datetime(now)),
+            ).fetchone()
+            if subscription:
+                plan_code = str(subscription["plan_code"])
+                return {
+                    "active": True,
+                    "plan_code": plan_code,
+                    "plan_name": {
+                        "standard": "Стандарт",
+                        "pro": "Pro",
+                    }.get(plan_code, plan_code),
+                    "source": str(subscription["source"]),
+                    "ends_at": self._as_datetime(subscription["ends_at"]),
+                }
+            account = connection.execute(
+                account_statement, (user_id,)
+            ).fetchone()
+
+        if not account:
+            return {
+                "active": False,
+                "plan_code": "",
+                "plan_name": "",
+                "source": "",
+                "ends_at": now,
+            }
+        trial_ends_at = self._as_datetime(account["created_at"]) + timedelta(days=7)
+        return {
+            "active": trial_ends_at > now,
+            "plan_code": "trial",
+            "plan_name": "Пробный",
+            "source": "trial",
+            "ends_at": trial_ends_at,
+        }
+
+    def record_star_payment(
+        self,
+        user_id: int,
+        plan_code: str,
+        duration_months: int,
+        amount_stars: int,
+        telegram_payment_charge_id: str,
+        provider_payment_charge_id: str,
+    ) -> datetime:
+        now = datetime.now(UTC).replace(tzinfo=None)
+        existing_statement = self._sql(
+            """
+            SELECT ends_at
+            FROM subscriptions
+            WHERE payment_charge_id = ?
+            """
+        )
+        latest_statement = self._sql(
+            """
+            SELECT ends_at
+            FROM subscriptions
+            WHERE user_id = ?
+            ORDER BY ends_at DESC
+            LIMIT 1
+            """
+        )
+        payment_statement = self._sql(
+            """
+            INSERT INTO star_payments (
+                telegram_payment_charge_id,
+                provider_payment_charge_id,
+                user_id,
+                plan_code,
+                duration_months,
+                amount_stars
+            )
+            VALUES (?, ?, ?, ?, ?, ?)
+            """
+        )
+        subscription_statement = self._sql(
+            """
+            INSERT INTO subscriptions (
+                user_id,
+                plan_code,
+                starts_at,
+                ends_at,
+                source,
+                payment_charge_id
+            )
+            VALUES (?, ?, ?, ?, 'stars', ?)
+            """
+        )
+        with self._connect() as connection:
+            existing = connection.execute(
+                existing_statement, (telegram_payment_charge_id,)
+            ).fetchone()
+            if existing:
+                return self._as_datetime(existing["ends_at"])
+
+            latest = connection.execute(
+                latest_statement, (user_id,)
+            ).fetchone()
+            latest_end = (
+                self._as_datetime(latest["ends_at"]) if latest else now
+            )
+            starts_at = max(now, latest_end)
+            ends_at = starts_at + timedelta(days=30 * duration_months)
+            connection.execute(
+                payment_statement,
+                (
+                    telegram_payment_charge_id,
+                    provider_payment_charge_id,
+                    user_id,
+                    plan_code,
+                    duration_months,
+                    amount_stars,
+                ),
+            )
+            connection.execute(
+                subscription_statement,
+                (
+                    user_id,
+                    plan_code,
+                    self._db_datetime(starts_at),
+                    self._db_datetime(ends_at),
+                    telegram_payment_charge_id,
+                ),
+            )
+            connection.commit()
+        return ends_at
 
     def save_leads(self, user_id: int, leads: list[Lead]) -> list[int]:
         statement = self._sql(
@@ -293,6 +497,15 @@ class Database:
         with self._connect() as connection:
             row = connection.execute(statement, (user_id,)).fetchone()
         return {key: int(value or 0) for key, value in dict(row).items()}
+
+    @staticmethod
+    def _as_datetime(value: Any) -> datetime:
+        if isinstance(value, datetime):
+            return value.replace(tzinfo=None)
+        return datetime.fromisoformat(str(value))
+
+    def _db_datetime(self, value: datetime) -> datetime | str:
+        return value if self.is_postgres else value.isoformat(sep=" ")
 
     @staticmethod
     def _row_to_lead(row: Any) -> Lead:
