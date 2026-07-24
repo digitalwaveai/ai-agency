@@ -21,6 +21,8 @@ class Settings:
     search_provider: str
     openai_model: str
     support_username: str
+    support_email: str = "ai.marketing.digital@mail.ru"
+    refresh_interval_hours: int = 24
 
     @classmethod
     def from_env(cls) -> "Settings":
@@ -43,6 +45,16 @@ class Settings:
         except ValueError as exc:
             raise RuntimeError("OWNER_TELEGRAM_ID должен быть целым числом") from exc
 
+        refresh_raw = os.getenv("REFRESH_INTERVAL_HOURS", "24").strip()
+        try:
+            refresh_interval = int(refresh_raw)
+            if not 1 <= refresh_interval <= 720:
+                raise ValueError
+        except ValueError as exc:
+            raise RuntimeError(
+                "REFRESH_INTERVAL_HOURS должен быть числом от 1 до 720"
+            ) from exc
+
         return cls(
             telegram_bot_token=token,
             serpapi_key=serpapi_key,
@@ -57,4 +69,8 @@ class Settings:
             support_username=os.getenv(
                 "SUPPORT_TELEGRAM", "@DigitalWave_vl"
             ).strip(),
+            support_email=os.getenv(
+                "SUPPORT_EMAIL", "ai.marketing.digital@mail.ru"
+            ).strip(),
+            refresh_interval_hours=refresh_interval,
         )
