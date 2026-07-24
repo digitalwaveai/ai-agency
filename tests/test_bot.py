@@ -33,6 +33,18 @@ class BotInterfaceTests(unittest.TestCase):
         self.assertIn("24 990 ₽", BOT_SOURCE)
         self.assertIn("7 дней бесплатно", BOT_SOURCE)
 
+    def test_menu_buttons_interrupt_unfinished_dialogs(self):
+        self.assertIn("USER_INPUT_FILTER", BOT_SOURCE)
+        self.assertIn("~filters.Regex(MENU_BUTTON_PATTERN)", BOT_SOURCE)
+        self.assertIn("self.navigate_menu", BOT_SOURCE)
+        self.assertIn("allow_reentry=True", BOT_SOURCE)
+
+    def test_telegram_stars_payment_is_complete(self):
+        self.assertIn('currency="XTR"', BOT_SOURCE)
+        self.assertIn("PreCheckoutQueryHandler", BOT_SOURCE)
+        self.assertIn("filters.SUCCESSFUL_PAYMENT", BOT_SOURCE)
+        self.assertIn("record_star_payment", BOT_SOURCE)
+
     def test_correct_leadpilot_greeting_is_present(self):
         self.assertIn("✨ LeadPilot AI", BOT_SOURCE)
         self.assertIn(
