@@ -830,8 +830,7 @@ class LeadPilotBot:
             f"Поиск: SerpAPI\n"
             f"Режим: {mode}\n"
             f"Модель сообщений: {self.settings.openai_model}\n"
-            f"Обновление радаров: каждые "
-            f"{self.settings.refresh_interval_hours} ч.\n\n"
+            "Повторный запуск сохранённого радара: /radar_run ID\n\n"
             "Секретные ключи хранятся в Railway и здесь не показываются.",
             reply_markup=MENU,
         )
