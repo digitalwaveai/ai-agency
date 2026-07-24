@@ -14,6 +14,7 @@ class Lead:
     query: str = ""
     score: int = 0
     id: int | None = None
+    status: str = "new"
 
     @property
     def contact(self) -> str:
