@@ -103,6 +103,38 @@ class DatabaseTests(unittest.TestCase):
 
         self.assertIn("status", columns)
 
+    def test_trial_and_star_payment_access_are_persistent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(f"sqlite:///{Path(directory) / 'billing.db'}")
+            db.init_schema()
+            db.ensure_account(42, username="client", first_name="Клиент")
+
+            trial = db.get_access_state(42)
+            paid_until = db.record_star_payment(
+                42,
+                "standard",
+                3,
+                1400,
+                "telegram-charge-1",
+                "provider-charge-1",
+            )
+            repeated_until = db.record_star_payment(
+                42,
+                "standard",
+                3,
+                1400,
+                "telegram-charge-1",
+                "provider-charge-1",
+            )
+            paid = db.get_access_state(42)
+
+        self.assertTrue(trial["active"])
+        self.assertEqual(trial["plan_code"], "trial")
+        self.assertTrue(paid["active"])
+        self.assertEqual(paid["plan_code"], "standard")
+        self.assertEqual(paid["source"], "stars")
+        self.assertEqual(paid_until, repeated_until)
+
 
 if __name__ == "__main__":
     unittest.main()
