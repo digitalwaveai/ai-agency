@@ -73,10 +73,8 @@ def _get_beta_expiry(database: Any, user_id: int) -> datetime | None:
 
 
 def _migrate_existing_beta_testers(database: Any) -> None:
-    now = _now_utc_naive()
-    ends_at = now + BETA_DURATION
     select_statement = """
-        SELECT user_id
+        SELECT user_id, updated_at
         FROM user_accounts
         WHERE role = 'beta_tester'
     """
@@ -98,11 +96,13 @@ def _migrate_existing_beta_testers(database: Any) -> None:
     with database._connect() as connection:
         rows = connection.execute(select_statement).fetchall()
         for row in rows:
+            starts_at = database._as_datetime(row["updated_at"])
+            ends_at = starts_at + BETA_DURATION
             connection.execute(
                 insert_statement,
                 (
                     int(row["user_id"]),
-                    database._db_datetime(now),
+                    database._db_datetime(starts_at),
                     database._db_datetime(ends_at),
                 ),
             )
