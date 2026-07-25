@@ -100,11 +100,23 @@ def install_role_policy(bot_class: type[Any]) -> None:
             self.db.set_role,
             target_id,
             "beta_tester",
-            managed_by=user.id,
+            managed_by=None,
+        )
+        expires_at = await asyncio.to_thread(
+            self.db.get_beta_expires_at,
+            target_id,
+        )
+        expiry_text = (
+            expires_at.strftime("%d.%m.%Y в %H:%M UTC")
+            if expires_at is not None
+            else "через 7 дней"
         )
         await message.reply_text(
-            f"✅ Пользователь {target_id} получил роль «Бета-тестер» "
-            "и бессрочный доступ без лимитов.",
+            f"✅ Пользователь {target_id} получил роль «Бета-тестер».\n\n"
+            "Доступ: полный безлимит по функциям бота.\n"
+            f"Срок: ровно 7 дней — до {expiry_text}.\n"
+            "Управление пользователями, просмотр списка пользователей "
+            "и назначение ролей недоступны.",
             reply_markup=MENU,
         )
 
