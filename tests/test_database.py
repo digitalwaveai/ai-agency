@@ -1,9 +1,10 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime
 from pathlib import Path
 
-from leadpilot.database import Database
+from leadpilot.database import Database, _add_calendar_months
 from leadpilot.models import Lead
 
 
@@ -132,6 +133,51 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(paid["plan_code"], "standard")
         self.assertEqual(paid["source"], "stars")
         self.assertEqual(paid_until, repeated_until)
+
+    def test_calendar_months_keep_day_and_clamp_short_months(self):
+        value = datetime(2026, 7, 25, 14, 30, 45)
+
+        self.assertEqual(
+            _add_calendar_months(value, 3),
+            datetime(2026, 10, 25, 14, 30, 45),
+        )
+        self.assertEqual(
+            _add_calendar_months(value, 12),
+            datetime(2027, 7, 25, 14, 30, 45),
+        )
+        self.assertEqual(
+            _add_calendar_months(datetime(2027, 1, 31, 9, 15), 1),
+            datetime(2027, 2, 28, 9, 15),
+        )
+        self.assertEqual(
+            _add_calendar_months(datetime(2028, 1, 31, 9, 15), 1),
+            datetime(2028, 2, 29, 9, 15),
+        )
+
+    def test_consecutive_plan_purchases_stack_calendar_months(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(f"sqlite:///{Path(directory) / 'stacked-billing.db'}")
+            db.init_schema()
+            db.ensure_account(42)
+
+            standard_until = db.record_star_payment(
+                42,
+                "standard",
+                3,
+                2500,
+                "telegram-charge-standard",
+                "provider-charge-standard",
+            )
+            pro_until = db.record_star_payment(
+                42,
+                "pro",
+                12,
+                22500,
+                "telegram-charge-pro",
+                "provider-charge-pro",
+            )
+
+        self.assertEqual(pro_until, _add_calendar_months(standard_until, 12))
 
     def test_project_questionnaire_fields_and_project_leads_are_persistent(self):
         with tempfile.TemporaryDirectory() as directory:
