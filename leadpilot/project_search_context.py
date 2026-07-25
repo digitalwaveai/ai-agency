@@ -21,6 +21,11 @@ STOP_WORDS = {
     "никаких", "the", "a", "an", "and", "or", "for", "to", "of", "in",
     "on", "with",
 }
+GENERIC_ROOTS = {
+    "друг", "проект", "компан", "клиент", "орган", "крупн", "сильн",
+    "собств", "готов", "действ", "актив", "любые", "прочие", "разные",
+    "business", "company", "client", "project",
+}
 
 
 def _normalize(value: object) -> str:
@@ -41,15 +46,23 @@ def _words(value: object) -> list[str]:
     return [_normalize(item) for item in WORD_RE.findall(_normalize(value))]
 
 
-def _exclusion_roots(value: str) -> set[str]:
+def _meaningful_roots(value: str) -> set[str]:
     roots: set[str] = set()
     for word in _words(value):
         if word in STOP_WORDS:
             continue
         root = _root(word)
+        if root in GENERIC_ROOTS:
+            continue
         if len(root) >= 3 or root in {"ai", "ии", "wb", "вб"}:
             roots.add(root)
     return roots
+
+
+def _exclusion_groups(value: str) -> list[set[str]]:
+    chunks = re.split(r"[,;\n]+|\s+(?:и|или)\s+", _normalize(value))
+    groups = [_meaningful_roots(chunk) for chunk in chunks]
+    return [group for group in groups if group]
 
 
 def _lead_text(lead: Any) -> str:
@@ -70,10 +83,8 @@ def _lead_text(lead: Any) -> str:
 def _matches_exclusion(lead: Any, exclusions: str) -> bool:
     if not exclusions.strip():
         return False
-    text = _lead_text(lead)
-    lead_roots = {_root(word) for word in _words(text)}
-    roots = _exclusion_roots(exclusions)
-    return bool(roots and roots.intersection(lead_roots))
+    lead_roots = {_root(word) for word in _words(_lead_text(lead))}
+    return any(group.issubset(lead_roots) for group in _exclusion_groups(exclusions))
 
 
 def install_project_search_context(
