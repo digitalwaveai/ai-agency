@@ -4,6 +4,7 @@ from .database import Database
 from .global_price_mode import install_global_price_mode
 from .personal_lead_ids import install_personal_lead_ids
 from .project_questionnaires import install_project_questionnaires
+from .project_schema_hotfix import install_project_schema_hotfix
 from .project_search_context import install_project_search_context
 from .role_policy import install_role_policy
 from .search_quality import install_search_quality
@@ -16,6 +17,7 @@ install_beta_access(LeadPilotBot, Database)
 install_personal_lead_ids(Database)
 install_project_questionnaires(LeadPilotBot, Database)
 install_usage_limits(LeadPilotBot, Database)
+install_project_schema_hotfix(Database)
 install_search_quality(LeadPilotBot, SerpApiClient)
 install_project_search_context(LeadPilotBot, SerpApiClient)
 install_role_policy(LeadPilotBot)
