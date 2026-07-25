@@ -9,6 +9,7 @@ from .project_radars import install_project_radars
 from .project_schema_hotfix import install_project_schema_hotfix
 from .project_search_context import install_project_search_context
 from .role_policy import install_role_policy
+from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .serpapi import SerpApiClient
 from .usage_limits import install_usage_limits
@@ -26,6 +27,7 @@ install_project_search_context(LeadPilotBot, SerpApiClient)
 install_role_policy(LeadPilotBot)
 install_global_price_mode(LeadPilotBot)
 install_project_button_guard(LeadPilotBot)
+install_scheduled_radars(LeadPilotBot, Database)
 install_user_commands(LeadPilotBot)
 
 
