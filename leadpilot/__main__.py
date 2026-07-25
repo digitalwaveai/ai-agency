@@ -8,6 +8,7 @@ from .project_questionnaires import install_project_questionnaires
 from .project_radars import install_project_radars
 from .project_schema_hotfix import install_project_schema_hotfix
 from .project_search_context import install_project_search_context
+from .radar_inline_controls import install_radar_inline_controls
 from .radar_menu_access_fix import install_radar_menu_access_fix
 from .role_policy import install_role_policy
 from .scheduled_radars import install_scheduled_radars
@@ -31,6 +32,7 @@ install_project_button_guard(LeadPilotBot)
 install_scheduled_radars(LeadPilotBot, Database)
 install_radar_menu_access_fix(LeadPilotBot)
 install_user_commands(LeadPilotBot)
+install_radar_inline_controls(LeadPilotBot)
 
 
 if __name__ == "__main__":
