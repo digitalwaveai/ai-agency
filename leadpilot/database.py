@@ -1,11 +1,20 @@
 from __future__ import annotations
 
 import sqlite3
+from calendar import monthrange
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from .models import Lead
+
+
+def _add_calendar_months(value: datetime, months: int) -> datetime:
+    month_index = value.year * 12 + value.month - 1 + months
+    year, zero_based_month = divmod(month_index, 12)
+    month = zero_based_month + 1
+    day = min(value.day, monthrange(year, month)[1])
+    return value.replace(year=year, month=month, day=day)
 
 
 class Database:
@@ -440,7 +449,7 @@ class Database:
             latest = connection.execute(latest_statement, (user_id,)).fetchone()
             latest_end = self._as_datetime(latest["ends_at"]) if latest else now
             starts_at = max(now, latest_end)
-            ends_at = starts_at + timedelta(days=30 * duration_months)
+            ends_at = _add_calendar_months(starts_at, duration_months)
             connection.execute(
                 payment_statement,
                 (
