@@ -59,6 +59,7 @@ class Database:
                 search_query TEXT NOT NULL DEFAULT '',
                 score INTEGER NOT NULL DEFAULT 0,
                 status TEXT NOT NULL DEFAULT 'new',
+                project_id BIGINT,
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 UNIQUE(user_id, source_url)
             )
@@ -68,8 +69,14 @@ class Database:
                 id {id_column},
                 user_id BIGINT NOT NULL,
                 name TEXT NOT NULL,
+                category_code TEXT NOT NULL DEFAULT 'custom',
+                category_name TEXT NOT NULL DEFAULT 'Своя ниша',
                 niche TEXT NOT NULL,
+                offer TEXT NOT NULL DEFAULT '',
+                target_audience TEXT NOT NULL DEFAULT '',
                 region TEXT NOT NULL DEFAULT '',
+                advantage TEXT NOT NULL DEFAULT '',
+                status TEXT NOT NULL DEFAULT 'active',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
         """
@@ -89,6 +96,9 @@ class Database:
                 user_id BIGINT PRIMARY KEY,
                 username TEXT NOT NULL DEFAULT '',
                 first_name TEXT NOT NULL DEFAULT '',
+                role TEXT NOT NULL DEFAULT 'user',
+                managed_by BIGINT,
+                price_mode TEXT NOT NULL DEFAULT 'live',
                 created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -124,20 +134,67 @@ class Database:
             connection.execute(payments_statement)
             connection.execute(subscriptions_statement)
             if self.is_postgres:
-                connection.execute(
-                    "ALTER TABLE leads "
-                    "ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'new'"
+                migrations = (
+                    ("leads", "status", "TEXT NOT NULL DEFAULT 'new'"),
+                    ("leads", "project_id", "BIGINT"),
+                    ("projects", "category_code", "TEXT NOT NULL DEFAULT 'custom'"),
+                    (
+                        "projects",
+                        "category_name",
+                        "TEXT NOT NULL DEFAULT 'Своя ниша'",
+                    ),
+                    ("projects", "offer", "TEXT NOT NULL DEFAULT ''"),
+                    ("projects", "target_audience", "TEXT NOT NULL DEFAULT ''"),
+                    ("projects", "advantage", "TEXT NOT NULL DEFAULT ''"),
+                    ("projects", "status", "TEXT NOT NULL DEFAULT 'active'"),
+                    ("user_accounts", "role", "TEXT NOT NULL DEFAULT 'user'"),
+                    ("user_accounts", "managed_by", "BIGINT"),
+                    (
+                        "user_accounts",
+                        "price_mode",
+                        "TEXT NOT NULL DEFAULT 'live'",
+                    ),
                 )
-            else:
-                columns = {
-                    str(row["name"])
-                    for row in connection.execute("PRAGMA table_info(leads)").fetchall()
-                }
-                if "status" not in columns:
+                for table, column, definition in migrations:
                     connection.execute(
-                        "ALTER TABLE leads "
-                        "ADD COLUMN status TEXT NOT NULL DEFAULT 'new'"
+                        f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS "
+                        f"{column} {definition}"
                     )
+            else:
+                migrations = {
+                    "leads": (
+                        ("status", "TEXT NOT NULL DEFAULT 'new'"),
+                        ("project_id", "BIGINT"),
+                    ),
+                    "projects": (
+                        ("category_code", "TEXT NOT NULL DEFAULT 'custom'"),
+                        (
+                            "category_name",
+                            "TEXT NOT NULL DEFAULT 'Своя ниша'",
+                        ),
+                        ("offer", "TEXT NOT NULL DEFAULT ''"),
+                        ("target_audience", "TEXT NOT NULL DEFAULT ''"),
+                        ("advantage", "TEXT NOT NULL DEFAULT ''"),
+                        ("status", "TEXT NOT NULL DEFAULT 'active'"),
+                    ),
+                    "user_accounts": (
+                        ("role", "TEXT NOT NULL DEFAULT 'user'"),
+                        ("managed_by", "BIGINT"),
+                        ("price_mode", "TEXT NOT NULL DEFAULT 'live'"),
+                    ),
+                }
+                for table, definitions in migrations.items():
+                    columns = {
+                        str(row["name"])
+                        for row in connection.execute(
+                            f"PRAGMA table_info({table})"
+                        ).fetchall()
+                    }
+                    for column, definition in definitions:
+                        if column not in columns:
+                            connection.execute(
+                                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+                            )
             connection.commit()
 
     def ensure_account(
@@ -160,6 +217,112 @@ class Database:
         with self._connect() as connection:
             connection.execute(statement, (user_id, username, first_name))
             connection.commit()
+
+    def ensure_owner(self, owner_user_id: int) -> None:
+        """Keep exactly one permanent owner, identified by Railway settings."""
+        demote_statement = self._sql(
+            """
+            UPDATE user_accounts
+            SET role = 'user', managed_by = NULL, price_mode = 'live',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE role = 'owner' AND user_id <> ?
+            """
+        )
+        owner_statement = self._sql(
+            """
+            INSERT INTO user_accounts (user_id, role)
+            VALUES (?, 'owner')
+            ON CONFLICT(user_id) DO UPDATE SET
+                role = 'owner',
+                managed_by = NULL,
+                updated_at = CURRENT_TIMESTAMP
+            """
+        )
+        with self._connect() as connection:
+            connection.execute(demote_statement, (owner_user_id,))
+            connection.execute(owner_statement, (owner_user_id,))
+            connection.commit()
+
+    def get_role(self, user_id: int) -> str:
+        statement = self._sql("SELECT role FROM user_accounts WHERE user_id = ?")
+        with self._connect() as connection:
+            row = connection.execute(statement, (user_id,)).fetchone()
+        role = str(row["role"]) if row else "user"
+        return role if role in {"owner", "admin", "beta_tester", "user"} else "user"
+
+    def get_role_record(self, user_id: int) -> dict[str, Any]:
+        statement = self._sql(
+            """
+            SELECT user_id, username, first_name, role, managed_by
+            FROM user_accounts
+            WHERE user_id = ?
+            """
+        )
+        with self._connect() as connection:
+            row = connection.execute(statement, (user_id,)).fetchone()
+        if row:
+            return dict(row)
+        return {
+            "user_id": user_id,
+            "username": "",
+            "first_name": "",
+            "role": "user",
+            "managed_by": None,
+        }
+
+    def set_role(
+        self,
+        user_id: int,
+        role: str,
+        *,
+        managed_by: int | None = None,
+    ) -> bool:
+        if role not in {"admin", "beta_tester", "user"}:
+            raise ValueError("Недопустимая роль")
+        statement = self._sql(
+            """
+            UPDATE user_accounts
+            SET role = ?, managed_by = ?, price_mode = 'live',
+                updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND role <> 'owner'
+            """
+        )
+        with self._connect() as connection:
+            cursor = connection.execute(
+                statement,
+                (
+                    role,
+                    managed_by if role == "beta_tester" else None,
+                    user_id,
+                ),
+            )
+            changed = cursor.rowcount > 0
+            connection.commit()
+        return changed
+
+    def get_price_mode(self, user_id: int) -> str:
+        statement = self._sql(
+            "SELECT price_mode FROM user_accounts WHERE user_id = ? AND role = 'owner'"
+        )
+        with self._connect() as connection:
+            row = connection.execute(statement, (user_id,)).fetchone()
+        return "test" if row and str(row["price_mode"]) == "test" else "live"
+
+    def set_owner_price_mode(self, user_id: int, mode: str) -> bool:
+        if mode not in {"live", "test"}:
+            raise ValueError("Недопустимый режим цен")
+        statement = self._sql(
+            """
+            UPDATE user_accounts
+            SET price_mode = ?, updated_at = CURRENT_TIMESTAMP
+            WHERE user_id = ? AND role = 'owner'
+            """
+        )
+        with self._connect() as connection:
+            cursor = connection.execute(statement, (mode, user_id))
+            changed = cursor.rowcount > 0
+            connection.commit()
+        return changed
 
     def get_access_state(self, user_id: int) -> dict[str, Any]:
         now = datetime.now(UTC).replace(tzinfo=None)
@@ -196,9 +359,7 @@ class Database:
                     "source": str(subscription["source"]),
                     "ends_at": self._as_datetime(subscription["ends_at"]),
                 }
-            account = connection.execute(
-                account_statement, (user_id,)
-            ).fetchone()
+            account = connection.execute(account_statement, (user_id,)).fetchone()
 
         if not account:
             return {
@@ -276,12 +437,8 @@ class Database:
             if existing:
                 return self._as_datetime(existing["ends_at"])
 
-            latest = connection.execute(
-                latest_statement, (user_id,)
-            ).fetchone()
-            latest_end = (
-                self._as_datetime(latest["ends_at"]) if latest else now
-            )
+            latest = connection.execute(latest_statement, (user_id,)).fetchone()
+            latest_end = self._as_datetime(latest["ends_at"]) if latest else now
             starts_at = max(now, latest_end)
             ends_at = starts_at + timedelta(days=30 * duration_months)
             connection.execute(
@@ -308,14 +465,19 @@ class Database:
             connection.commit()
         return ends_at
 
-    def save_leads(self, user_id: int, leads: list[Lead]) -> list[int]:
+    def save_leads(
+        self,
+        user_id: int,
+        leads: list[Lead],
+        project_id: int | None = None,
+    ) -> list[int]:
         statement = self._sql(
             """
             INSERT INTO leads (
                 user_id, name, source_url, website, phone, address,
-                snippet, search_query, score
+                snippet, search_query, score, project_id
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(user_id, source_url) DO UPDATE SET
                 name = excluded.name,
                 website = excluded.website,
@@ -323,7 +485,8 @@ class Database:
                 address = excluded.address,
                 snippet = excluded.snippet,
                 search_query = excluded.search_query,
-                score = excluded.score
+                score = excluded.score,
+                project_id = COALESCE(excluded.project_id, leads.project_id)
             RETURNING id
             """
         )
@@ -342,6 +505,7 @@ class Database:
                         lead.snippet,
                         lead.query,
                         lead.score,
+                        project_id,
                     ),
                 ).fetchone()
                 ids.append(
@@ -378,9 +542,7 @@ class Database:
             row = connection.execute(statement, (user_id, lead_id)).fetchone()
         return self._row_to_lead(row) if row else None
 
-    def update_lead_status(
-        self, user_id: int, lead_id: int, status: str
-    ) -> bool:
+    def update_lead_status(self, user_id: int, lead_id: int, status: str) -> bool:
         statement = self._sql(
             """
             UPDATE leads
@@ -395,18 +557,42 @@ class Database:
         return changed
 
     def create_project(
-        self, user_id: int, name: str, niche: str, region: str
+        self,
+        user_id: int,
+        name: str,
+        niche: str,
+        region: str,
+        *,
+        category_code: str = "custom",
+        category_name: str = "Своя ниша",
+        offer: str = "",
+        target_audience: str = "",
+        advantage: str = "",
     ) -> int:
         statement = self._sql(
             """
-            INSERT INTO projects (user_id, name, niche, region)
-            VALUES (?, ?, ?, ?)
+            INSERT INTO projects (
+                user_id, name, category_code, category_name, niche, offer,
+                target_audience, region, advantage, status
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 'active')
             RETURNING id
             """
         )
         with self._connect() as connection:
             row = connection.execute(
-                statement, (user_id, name, niche, region)
+                statement,
+                (
+                    user_id,
+                    name,
+                    category_code,
+                    category_name,
+                    niche,
+                    offer,
+                    target_audience,
+                    region,
+                    advantage,
+                ),
             ).fetchone()
             connection.commit()
         return int(row["id"])
@@ -414,7 +600,8 @@ class Database:
     def list_projects(self, user_id: int, limit: int = 20) -> list[dict[str, Any]]:
         statement = self._sql(
             """
-            SELECT id, name, niche, region, created_at
+            SELECT id, name, category_code, category_name, niche, offer,
+                   target_audience, region, advantage, status, created_at
             FROM projects
             WHERE user_id = ?
             ORDER BY id DESC
@@ -424,6 +611,19 @@ class Database:
         with self._connect() as connection:
             rows = connection.execute(statement, (user_id, limit)).fetchall()
         return [dict(row) for row in rows]
+
+    def get_project(self, user_id: int, project_id: int) -> dict[str, Any] | None:
+        statement = self._sql(
+            """
+            SELECT id, name, category_code, category_name, niche, offer,
+                   target_audience, region, advantage, status, created_at
+            FROM projects
+            WHERE user_id = ? AND id = ?
+            """
+        )
+        with self._connect() as connection:
+            row = connection.execute(statement, (user_id, project_id)).fetchone()
+        return dict(row) if row else None
 
     def create_radar(
         self,
