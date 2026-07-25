@@ -1,6 +1,6 @@
+import sqlite3
 import tempfile
 import unittest
-import sqlite3
 from pathlib import Path
 
 from leadpilot.database import Database
@@ -96,9 +96,7 @@ class DatabaseTests(unittest.TestCase):
             db.init_schema()
             columns = {
                 row[1]
-                for row in sqlite3.connect(path).execute(
-                    "PRAGMA table_info(leads)"
-                )
+                for row in sqlite3.connect(path).execute("PRAGMA table_info(leads)")
             }
 
         self.assertIn("status", columns)
@@ -134,6 +132,80 @@ class DatabaseTests(unittest.TestCase):
         self.assertEqual(paid["plan_code"], "standard")
         self.assertEqual(paid["source"], "stars")
         self.assertEqual(paid_until, repeated_until)
+
+    def test_project_questionnaire_fields_and_project_leads_are_persistent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "projects.db"
+            db = Database(f"sqlite:///{path}")
+            db.init_schema()
+            project_id = db.create_project(
+                42,
+                "AI для бьюти",
+                "косметологи",
+                "Москва",
+                category_code="ai_automation",
+                category_name="AI и автоматизация",
+                offer="AI-бот для заявок",
+                target_audience="частные косметологи",
+                advantage="не терять обращения",
+            )
+            lead_id = db.save_leads(
+                42,
+                [
+                    Lead(
+                        name="Клиника",
+                        source_url="https://example.test/clinic",
+                        query="косметологи Москва",
+                    )
+                ],
+                project_id=project_id,
+            )[0]
+            project = db.get_project(42, project_id)
+            row = (
+                sqlite3.connect(path)
+                .execute("SELECT project_id FROM leads WHERE id = ?", (lead_id,))
+                .fetchone()
+            )
+
+        self.assertEqual(project["category_code"], "ai_automation")
+        self.assertEqual(project["offer"], "AI-бот для заявок")
+        self.assertEqual(project["target_audience"], "частные косметологи")
+        self.assertEqual(project["advantage"], "не терять обращения")
+        self.assertEqual(row[0], project_id)
+
+    def test_owner_is_unique_and_price_mode_is_owner_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(f"sqlite:///{Path(directory) / 'roles.db'}")
+            db.init_schema()
+            db.ensure_account(10)
+            db.ensure_account(20)
+            db.ensure_owner(10)
+            self.assertEqual(db.get_role(10), "owner")
+            self.assertTrue(db.set_owner_price_mode(10, "test"))
+            self.assertEqual(db.get_price_mode(10), "test")
+            self.assertFalse(db.set_owner_price_mode(20, "test"))
+
+            db.ensure_owner(20)
+
+            self.assertEqual(db.get_role(10), "user")
+            self.assertEqual(db.get_price_mode(10), "live")
+            self.assertEqual(db.get_role(20), "owner")
+
+    def test_admin_can_own_beta_tester_assignment(self):
+        with tempfile.TemporaryDirectory() as directory:
+            db = Database(f"sqlite:///{Path(directory) / 'team.db'}")
+            db.init_schema()
+            for user_id in (1, 2, 3):
+                db.ensure_account(user_id)
+            db.ensure_owner(1)
+            db.set_role(2, "admin")
+            db.set_role(3, "beta_tester", managed_by=2)
+            beta = db.get_role_record(3)
+
+            self.assertEqual(db.get_role(1), "owner")
+            self.assertEqual(db.get_role(2), "admin")
+            self.assertEqual(beta["role"], "beta_tester")
+            self.assertEqual(beta["managed_by"], 2)
 
 
 if __name__ == "__main__":
