@@ -1,3 +1,4 @@
+from .analysis_insights import install_analysis_insights
 from .beta_access import install_beta_access
 from .bot import LeadPilotBot, run
 from .database import Database
@@ -22,6 +23,7 @@ install_beta_access(LeadPilotBot, Database)
 install_personal_lead_ids(Database)
 install_project_questionnaires(LeadPilotBot, Database)
 install_project_radars(LeadPilotBot, Database)
+install_analysis_insights(LeadPilotBot, Database)
 install_usage_limits(LeadPilotBot, Database)
 install_project_schema_hotfix(Database)
 install_search_quality(LeadPilotBot, SerpApiClient)
