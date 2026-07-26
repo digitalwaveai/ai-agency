@@ -15,6 +15,7 @@ from .role_policy import install_role_policy
 from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .serpapi import SerpApiClient
+from .trial_limits_guard import install_trial_limits_guard
 from .usage_limits import install_usage_limits
 from .user_commands import install_user_commands
 
@@ -35,6 +36,7 @@ install_scheduled_radars(LeadPilotBot, Database)
 install_radar_menu_access_fix(LeadPilotBot)
 install_user_commands(LeadPilotBot)
 install_radar_inline_controls(LeadPilotBot)
+install_trial_limits_guard(LeadPilotBot)
 
 
 if __name__ == "__main__":
