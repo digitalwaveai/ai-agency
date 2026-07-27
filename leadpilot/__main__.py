@@ -3,6 +3,7 @@ from .beta_access import install_beta_access
 from .bot import LeadPilotBot, run
 from .database import Database
 from .global_price_mode import install_global_price_mode
+from .hide_settings_button import install_hide_settings_button
 from .personal_lead_ids import install_personal_lead_ids
 from .project_button_guard import install_project_button_guard
 from .project_questionnaires import install_project_questionnaires
@@ -37,6 +38,7 @@ install_radar_menu_access_fix(LeadPilotBot)
 install_user_commands(LeadPilotBot)
 install_radar_inline_controls(LeadPilotBot)
 install_trial_limits_guard(LeadPilotBot)
+install_hide_settings_button(LeadPilotBot)
 
 
 if __name__ == "__main__":
