@@ -127,11 +127,10 @@ class FakeDatabase:
         return []
 
 
-class UsageIntegrityTests(unittest.TestCase):
-    def setUp(self) -> None:
-        if hasattr(FakeDatabase, "_usage_integrity_installed"):
-            delattr(FakeDatabase, "_usage_integrity_installed")
+install_usage_integrity(FakeDatabase)
 
+
+class UsageIntegrityTests(unittest.TestCase):
     def test_snapshot_repairs_persisted_lead_and_radar_counts(self):
         with tempfile.TemporaryDirectory() as directory:
             database = FakeDatabase(Path(directory) / "usage.sqlite")
@@ -157,7 +156,6 @@ class UsageIntegrityTests(unittest.TestCase):
                 )
                 connection.commit()
 
-            install_usage_integrity(FakeDatabase)
             snapshot = database.get_usage_snapshot(1)
 
             self.assertEqual(snapshot["used"]["leads"], 3)
@@ -180,7 +178,6 @@ class UsageIntegrityTests(unittest.TestCase):
                     )
                 connection.commit()
 
-            install_usage_integrity(FakeDatabase)
             allowed, snapshot = database.consume_usage(1, "leads", 2)
 
             self.assertFalse(allowed)
@@ -197,7 +194,6 @@ class UsageIntegrityTests(unittest.TestCase):
                 )
                 connection.commit()
 
-            install_usage_integrity(FakeDatabase)
             snapshot = database.get_usage_snapshot(1)
 
             self.assertEqual(snapshot["used"]["leads"], 7)
