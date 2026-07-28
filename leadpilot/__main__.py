@@ -19,6 +19,7 @@ from .search_quality import install_search_quality
 from .serpapi import SerpApiClient
 from .trial_limits_guard import install_trial_limits_guard
 from .trial_radar_paywall import install_trial_radar_paywall
+from .usage_integrity import install_usage_integrity
 from .usage_limits import install_usage_limits
 from .user_commands import install_user_commands
 
@@ -42,6 +43,7 @@ install_radar_inline_controls(LeadPilotBot)
 install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
+install_usage_integrity(Database)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
