@@ -19,6 +19,14 @@ ROLE_LABELS = {
     "user": "Пользователь",
 }
 
+USAGE_LABELS = {
+    "searches": "Поиски",
+    "leads": "Лиды",
+    "analyses": "Анализы",
+    "messages": "Сообщения",
+    "radars": "Радары",
+}
+
 
 def _clean_text(value: object, fallback: str = "") -> str:
     text = " ".join(str(value or "").split())
@@ -58,7 +66,9 @@ def _load_users(database: Any, owner_user_id: int | None) -> list[dict[str, Any]
         ]
 
     for account in accounts:
-        account["access"] = database.get_access_state(int(account["user_id"]))
+        user_id = int(account["user_id"])
+        account["access"] = database.get_access_state(user_id)
+        account["usage"] = database.get_usage_snapshot(user_id)
     return accounts
 
 
@@ -79,6 +89,24 @@ def _tariff_text(account: dict[str, Any]) -> str:
     return f"Пробный до {end_text}" if end_text else "Пробный"
 
 
+def _usage_text(account: dict[str, Any]) -> str:
+    snapshot = dict(account.get("usage") or {})
+    if snapshot.get("unlimited"):
+        return "Лимиты: без ограничений"
+    if not snapshot.get("active"):
+        return "Лимиты: недоступны"
+
+    used = dict(snapshot.get("used") or {})
+    totals = dict(snapshot.get("totals") or {})
+    lines = ["Использовано:"]
+    for field in ("searches", "leads", "analyses", "messages", "radars"):
+        lines.append(
+            f"{USAGE_LABELS[field]}: {int(used.get(field, 0))} из "
+            f"{int(totals.get(field, 0))}"
+        )
+    return "\n".join(lines)
+
+
 def _user_block(index: int, account: dict[str, Any]) -> str:
     user_id = int(account["user_id"])
     username = _clean_text(account.get("username"))
@@ -89,6 +117,7 @@ def _user_block(index: int, account: dict[str, Any]) -> str:
     safe_name = html.escape(first_name)
     safe_username = html.escape(username)
     safe_tariff = html.escape(_tariff_text(account))
+    safe_usage = html.escape(_usage_text(account))
     profile = f'<a href="tg://user?id={user_id}">{safe_name}</a>'
     username_text = f"@{safe_username}" if username else "не указан"
 
@@ -97,6 +126,7 @@ def _user_block(index: int, account: dict[str, Any]) -> str:
         f"Username: {username_text}\n"
         f"ID: <code>{user_id}</code>\n"
         f"Тариф: {safe_tariff}\n"
+        f"{safe_usage}\n"
         f"Подключился: {created_text} UTC"
     )
 
@@ -177,7 +207,7 @@ async def _configure_command_menu(application: Any, owner_user_id: int | None) -
         if owner_user_id is not None:
             owner_commands = _merge_commands(
                 default_commands,
-                {"users": "Пользователи, статистика и тарифы"},
+                {"users": "Пользователи, тарифы и лимиты"},
             )
             await application.bot.set_my_commands(
                 owner_commands,
