@@ -1,3 +1,4 @@
+from . import bot as bot_module
 from .analysis_insights import install_analysis_insights
 from .beta_access import install_beta_access
 from .bot import LeadPilotBot, run
@@ -41,6 +42,12 @@ install_radar_inline_controls(LeadPilotBot)
 install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
+
+# Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
+bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
+    "20 поисков · 20 лидов · 20 анализов · 20 сообщений",
+    "10 поисков · 10 лидов · 10 анализов · 10 сообщений",
+)
 
 
 if __name__ == "__main__":
