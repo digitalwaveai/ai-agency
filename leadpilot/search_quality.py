@@ -5,7 +5,7 @@ import json
 import re
 from functools import wraps
 from typing import Any
-from urllib.parse import urlencode, urlparse
+from urllib.parse import unquote, urlencode, urlparse
 from urllib.request import Request, urlopen
 
 from telegram import Update
@@ -14,6 +14,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from .models import Lead
 
 TARGET_SEPARATOR = " ||| "
+PRIORITY_SEPARATOR = " ||+ "
 
 WORD_RE = re.compile(r"[a-zа-яё0-9]+(?:-[a-zа-яё0-9]+)?", re.IGNORECASE)
 PHONE_RE = re.compile(r"(?:\+?7|8)[\d\s().-]{8,}\d")
@@ -31,6 +32,8 @@ GENERIC_ROOTS = {
     "владел", "бизнес", "компан", "клиент", "задач", "процесс", "услуг",
     "проект", "продукт", "решен", "работ", "развит", "рост", "план",
     "действ", "повтор", "ручн", "новый", "готов", "систем", "сервис",
+    "активн", "входящ", "холодн", "заявк", "заяво", "запис", "мессен",
+    "поток", "сайт",
     "company", "business", "owner", "client", "service", "project", "product",
 }
 
@@ -52,12 +55,68 @@ GENERIC_CONTENT_TERMS = {
 
 ARTICLE_MARKERS = {
     "топ-", "топ ", "рейтинг", "лучшие ", "список ", "обзор ", "статья ",
-    "как выбрать", "что такое", "инструкция", "новости", "вакансии",
+    "что такое", "сколько стоит", "инструкция",
+    "пошагов", "новости", "вакансии", "сервисы для", "сайты для",
+    "идеи для", "советы", "гайд", "чек-лист", "вебинар", "курс ",
+    "анкета", "опрос",
 }
+
+ARTICLE_QUESTION_RE = re.compile(
+    r"^(?:как|почему|зачем|сколько)\s+"
+    r"(?:открыть|выбрать|создать|сделать|запустить|увеличить|продвигать|"
+    r"настроить|салон\w*|мастер\w*|бизнес\w*|компан\w*|эксперт\w*|"
+    r"селлер\w*)\b",
+    re.IGNORECASE,
+)
 
 BLOCKED_HOSTS = {
     "wikipedia.org", "ru.wikipedia.org", "hh.ru", "superjob.ru", "rabota.ru",
-    "trudvsem.ru", "ria.ru", "tass.ru", "rbc.ru",
+    "trudvsem.ru", "ria.ru", "tass.ru", "rbc.ru", "vc.ru", "dzen.ru",
+    "zen.yandex.ru", "habr.com", "medium.com", "pikabu.ru", "2gis.ru",
+    "zoon.ru", "yell.ru", "spravker.ru", "forms.gle", "docs.google.com",
+    "typeform.com", "survio.com",
+}
+
+CONTENT_PATH_MARKERS = {
+    "article", "articles", "blog", "blogs", "guide", "guides", "journal",
+    "journals", "news", "novosti", "post", "posts", "publication",
+    "publications", "rating", "ratings", "review", "reviews", "statya",
+    "stati", "top", "tops", "vacancies", "vacancy", "vakansii", "wiki",
+    "webinar", "webinars", "course", "courses", "kurs", "quiz", "survey",
+    "anketa", "questionnaire", "form", "forms",
+}
+
+SOCIAL_PROFILE_HOSTS = {
+    "instagram.com",
+    "vk.com",
+    "t.me",
+    "telegram.me",
+    "ok.ru",
+}
+
+PROFILE_PAGE_HOSTS = {
+    "taplink.cc",
+    "dikidi.net",
+    "yclients.com",
+}
+
+SOCIAL_CONTENT_SEGMENTS = {
+    "p", "reel", "reels", "stories", "story", "explore", "tv", "wall",
+    "topic", "article", "articles", "video", "videos", "clip", "clips",
+    "s", "joinchat", "share", "addstickers",
+}
+
+LOCAL_SERVICE_PAGE_MARKERS = {
+    "продвижение сайта",
+    "продвижение салона",
+    "создание сайта",
+    "разработка сайта",
+    "заказать логотип",
+    "заказать фирменный логотип",
+    "маркетинг для",
+    "реклама для",
+    "увеличить прибыль",
+    "открыть салон",
 }
 
 CATEGORY_GROUPS: tuple[tuple[set[str], set[str]], ...] = (
@@ -107,6 +166,10 @@ AUDIENCE_GROUPS: tuple[tuple[set[str], set[str]], ...] = (
     (
         {"онлайн-школа", "эксперт", "наставник", "консультант"},
         {"онлайн-школа", "школа", "эксперт", "наставник", "консультант", "образовательный проект"},
+    ),
+    (
+        {"маркетинговое агентство", "digital-агентство", "диджитал-агентство", "отдел продаж", "продюсерский центр"},
+        {"маркетинговое агентство", "digital-агентство", "диджитал-агентство", "агентство", "отдел продаж", "продюсерский центр"},
     ),
 )
 
@@ -181,9 +244,18 @@ def _matches(text: str, roots: list[str]) -> int:
     return sum(1 for root in roots if _contains_root(text, root))
 
 
-def _split_target(target: str) -> tuple[str, str]:
-    primary, separator, secondary = target.partition(TARGET_SEPARATOR)
-    return primary.strip(), secondary.strip() if separator else ""
+def _split_target(target: str) -> tuple[str, str, str]:
+    search_target, priority_separator, priorities = target.partition(
+        PRIORITY_SEPARATOR
+    )
+    primary, target_separator, secondary = search_target.partition(
+        TARGET_SEPARATOR
+    )
+    return (
+        primary.strip(),
+        secondary.strip() if target_separator else "",
+        priorities.strip() if priority_separator else "",
+    )
 
 
 def _phrase_present(text: str, phrase: str) -> bool:
@@ -227,6 +299,84 @@ def _host(url: str) -> str:
         return ""
 
 
+def _path_segments(url: str) -> list[str]:
+    try:
+        path = unquote(urlparse(url).path).lower()
+    except ValueError:
+        return []
+    return [segment for segment in path.split("/") if segment]
+
+
+def _blocked_content_path(url: str) -> bool:
+    segments = _path_segments(url)
+    if segments and segments[-1].endswith(
+        (".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx")
+    ):
+        return True
+    if any(segment in CONTENT_PATH_MARKERS for segment in segments):
+        return True
+    path = "/".join(segments)
+    return any(
+        marker in path
+        for marker in (
+            "kak-otkryt",
+            "kak-vybrat",
+            "kak-uvelichit",
+            "poshagov",
+            "servisov-dlya",
+            "site-for",
+            "sayt-dlya",
+        )
+    )
+
+
+def _direct_social_profile(url: str) -> bool:
+    host = _host(url)
+    if host not in SOCIAL_PROFILE_HOSTS:
+        return False
+    segments = _path_segments(url)
+    if len(segments) != 1:
+        return False
+    segment = segments[0]
+    if segment in SOCIAL_CONTENT_SEGMENTS:
+        return False
+    return not any(
+        segment.startswith(prefix)
+        for prefix in ("wall-", "topic-", "video-", "clip-")
+    )
+
+
+def _business_surface(url: str) -> bool:
+    host = _host(url)
+    if not host or host in BLOCKED_HOSTS or _blocked_content_path(url):
+        return False
+    if host in SOCIAL_PROFILE_HOSTS:
+        return _direct_social_profile(url)
+    segments = _path_segments(url)
+    if host in PROFILE_PAGE_HOSTS or any(
+        host.endswith(f".{profile_host}") for profile_host in PROFILE_PAGE_HOSTS
+    ):
+        return bool(segments)
+    if not segments:
+        return True
+    if len(segments) == 1:
+        return True
+    return len(segments) <= 2 and any(
+        segment
+        in {
+            "about",
+            "company",
+            "contact",
+            "contacts",
+            "kontakty",
+            "o-kompanii",
+            "o-nas",
+            "profile",
+        }
+        for segment in segments
+    )
+
+
 def _hard_blocked(text: str, host: str) -> bool:
     combined = f"{text} {host}"
     return any(term in combined for term in HARD_NEGATIVE_TERMS)
@@ -243,7 +393,17 @@ def _generic_portal(text: str, host: str) -> bool:
 
 
 def _article_like(text: str) -> bool:
-    return any(marker in text for marker in ARTICLE_MARKERS)
+    normalized = _normalize(text)
+    return bool(ARTICLE_QUESTION_RE.search(normalized)) or any(
+        marker in normalized for marker in ARTICLE_MARKERS
+    )
+
+
+def _provider_page_for_local_target(text: str, target: str) -> bool:
+    if _online_target(target):
+        return False
+    normalized = _normalize(text)
+    return any(marker in normalized for marker in LOCAL_SERVICE_PAGE_MARKERS)
 
 
 def _online_target(value: str) -> bool:
@@ -252,7 +412,46 @@ def _online_target(value: str) -> bool:
 
 
 def _query_core(primary: str, secondary: str) -> str:
-    words = _important_words(primary)
+    words: list[str] = []
+    audience_aliases = _audience_aliases(primary)
+    preferred_audiences = (
+        "салон красоты",
+        "косметолог",
+        "студия",
+        "клиника",
+        "селлер",
+        "бренд",
+        "интернет-магазин",
+        "маркетинговое агентство",
+        "digital-агентство",
+        "отдел продаж",
+        "агентство недвижимости",
+        "риелтор",
+        "застройщик",
+        "онлайн-школа",
+        "эксперт",
+        "наставник",
+        "консультант",
+    )
+    normalized_primary = _normalize(primary)
+    for preferred in preferred_audiences:
+        roots = _important_tokens(preferred)
+        if roots and _matches(normalized_primary, roots) == len(roots):
+            words.append(preferred)
+        if len(words) >= 3:
+            break
+    if not words and audience_aliases:
+        for preferred in preferred_audiences:
+            if any(
+                preferred.startswith(alias) or alias.startswith(preferred)
+                for alias in audience_aliases
+            ):
+                words.append(preferred)
+            if len(words) >= 2:
+                break
+
+    if not words:
+        words = _important_words(primary)
     seen_roots = {_root(word) for word in words}
     if len(words) < 2:
         for word in _important_words(secondary):
@@ -277,7 +476,10 @@ def _query_core(primary: str, secondary: str) -> str:
 def _query_plans(primary: str, secondary: str, region: str) -> list[tuple[str, str]]:
     core = _query_core(primary, secondary)
     region = _normalize(region)
-    negatives = "-казино -ставки -букмекер -вакансии -новости -погода"
+    negatives = (
+        "-казино -ставки -букмекер -вакансии -новости -погода "
+        "-статья -блог -инструкция -рейтинг -топ -вебинар -анкета"
+    )
     combined = f"{primary} {secondary}"
     if _online_target(combined):
         return [
@@ -298,20 +500,67 @@ def _extract_phone(text: str) -> str:
 def _parse_payload(payload: dict[str, Any], query: str, engine: str) -> list[Lead]:
     leads: list[Lead] = []
     if engine == "google_maps":
-        for item in payload.get("local_results", []):
+        for item in payload.get("local_results", []) or []:
+            if not isinstance(item, dict):
+                continue
+            if any(
+                item.get(marker) is True
+                or str(item.get(marker) or "").strip().lower()
+                in {"1", "true", "yes"}
+                for marker in ("sponsored", "ad", "is_ad")
+            ):
+                continue
+            state = _normalize(
+                " ".join(
+                    str(item.get(field) or "")
+                    for field in ("open_state", "hours", "status")
+                )
+            )
+            if any(
+                marker in state
+                for marker in (
+                    "permanently closed",
+                    "temporarily closed",
+                    "closed permanently",
+                    "закрыто навсегда",
+                    "временно закрыто",
+                )
+            ):
+                continue
             name = str(item.get("title") or "").strip()
             if not name:
                 continue
             website = str(item.get("website") or "").strip()
+            if not website.startswith(("https://", "http://")):
+                website = ""
             phone = str(item.get("phone") or "").strip()
             address = str(item.get("address") or "").strip()
             place_id = str(item.get("place_id") or item.get("data_id") or "").strip()
-            links = item.get("links") if isinstance(item.get("links"), dict) else {}
-            maps_url = str(links.get("directions") or "").strip()
-            source_url = website or maps_url or f"serpapi://place/{place_id or name}"
+            has_place_identity = any(
+                (
+                    place_id,
+                    item.get("data_cid"),
+                    item.get("gps_coordinates"),
+                    address,
+                )
+            )
+            if not has_place_identity or not (website or phone):
+                continue
+            maps_params = {
+                "api": "1",
+                "query": ", ".join(
+                    part for part in (name, address) if part
+                ),
+            }
+            if place_id.startswith("ChI"):
+                maps_params["query_place_id"] = place_id
+            source_url = (
+                "https://www.google.com/maps/search/?"
+                + urlencode(maps_params)
+            )
             snippet_parts = [
                 str(item.get("type") or "").strip(),
-                str(item.get("description") or "").strip(),
+                str(item.get("description") or "").strip()[:240],
                 f"рейтинг {item['rating']}" if item.get("rating") else "",
                 f"отзывов {item['reviews']}" if item.get("reviews") else "",
             ]
@@ -328,10 +577,12 @@ def _parse_payload(payload: dict[str, Any], query: str, engine: str) -> list[Lea
             )
         return leads
 
-    for item in payload.get("organic_results", []):
+    for item in payload.get("organic_results", []) or []:
+        if not isinstance(item, dict):
+            continue
         name = str(item.get("title") or "").strip()
         link = str(item.get("link") or "").strip()
-        if not name or not link:
+        if not name or not link.startswith(("https://", "http://")):
             continue
         snippet = str(item.get("snippet") or "").strip()
         leads.append(
@@ -347,7 +598,14 @@ def _parse_payload(payload: dict[str, Any], query: str, engine: str) -> list[Lea
     return leads
 
 
-def _quality(lead: Lead, primary: str, secondary: str, region: str, engine: str) -> int | None:
+def _quality(
+    lead: Lead,
+    primary: str,
+    secondary: str,
+    region: str,
+    engine: str,
+    priorities: str = "",
+) -> int | None:
     title = _normalize(lead.name)
     body = _normalize(f"{lead.snippet} {lead.address}")
     host = _host(lead.website or lead.source_url)
@@ -355,6 +613,19 @@ def _quality(lead: Lead, primary: str, secondary: str, region: str, engine: str)
 
     if _hard_blocked(full, host):
         return None
+    if engine == "google":
+        page_url = lead.website or lead.source_url
+        if (
+            _generic_portal(full, host)
+            or _article_like(title)
+            or _blocked_content_path(page_url)
+            or not _business_surface(page_url)
+            or _provider_page_for_local_target(
+                f"{title} {body}",
+                f"{primary} {secondary}",
+            )
+        ):
+            return None
 
     primary_roots = _important_tokens(primary)
     secondary_roots = _important_tokens(secondary)
@@ -383,11 +654,6 @@ def _quality(lead: Lead, primary: str, secondary: str, region: str, engine: str)
     if not relevant:
         return None
 
-    if _generic_portal(full, host) and primary_signal < 5:
-        return None
-    if engine == "google" and _article_like(title) and not lead.phone and primary_signal < 6:
-        return None
-
     region_roots = _important_tokens(region)
     region_hit = _matches(full, region_roots) > 0 if region_roots else False
     online = _online_target(f"{primary} {secondary}")
@@ -403,15 +669,26 @@ def _quality(lead: Lead, primary: str, secondary: str, region: str, engine: str)
     score += 8 if lead.phone else 0
     score += 5 if lead.address else 0
     score += 5 if lead.website else 0
-    score -= 12 if _article_like(title) else 0
+    priority_hits = _matches(full, _important_tokens(priorities))
+    score += min(priority_hits * 3, 9)
     return max(1, min(score, 100))
 
 
 def _dedupe_key(lead: Lead) -> str:
-    host = _host(lead.website or lead.source_url)
+    name = _normalize(lead.name)
+    address = _normalize(lead.address)
+    if name and address:
+        return f"place:{name}|{address}"
+    phone = re.sub(r"\D+", "", lead.phone)
+    if phone:
+        return f"phone:{phone}"
+    url = lead.website or lead.source_url
+    host = _host(url)
+    if host in SOCIAL_PROFILE_HOSTS or host in PROFILE_PAGE_HOSTS:
+        return f"profile:{host}/{'/'.join(_path_segments(url))}"
     if host:
         return host
-    return _normalize(f"{lead.name}|{lead.address}|{lead.phone}")
+    return _normalize(f"{lead.name}|{lead.source_url}")
 
 
 def install_search_quality(bot_class: type[Any], serpapi_class: type[Any]) -> None:
@@ -424,7 +701,7 @@ def install_search_quality(bot_class: type[Any], serpapi_class: type[Any]) -> No
     @wraps(original_search)
     def search(self: Any, target: str, region: str, limit: int = 5) -> list[Lead]:
         limit = max(1, min(int(limit), 20))
-        primary, secondary = _split_target(target)
+        primary, secondary, priorities = _split_target(target)
         visible_query = " ".join(part for part in (primary, secondary, region) if part).strip()
 
         if self.demo_mode:
@@ -442,6 +719,8 @@ def install_search_quality(bot_class: type[Any], serpapi_class: type[Any]) -> No
             }
             if engine == "google":
                 params.update({"gl": "ru", "num": candidate_limit})
+            else:
+                params["type"] = "search"
 
             request = Request(
                 f"{self.endpoint}?{urlencode(params)}",
@@ -450,11 +729,25 @@ def install_search_quality(bot_class: type[Any], serpapi_class: type[Any]) -> No
             with urlopen(request, timeout=30) as response:
                 payload = json.loads(response.read().decode("utf-8"))
 
-            if payload.get("error"):
-                raise RuntimeError(str(payload["error"]))
+            error = str(payload.get("error") or "").strip()
+            if error:
+                normalized_error = error.casefold()
+                if (
+                    "hasn't returned any results" in normalized_error
+                    or "no results" in normalized_error
+                ):
+                    continue
+                raise RuntimeError(error)
 
             for lead in _parse_payload(payload, visible_query, engine):
-                quality = _quality(lead, primary, secondary, region, engine)
+                quality = _quality(
+                    lead,
+                    primary,
+                    secondary,
+                    region,
+                    engine,
+                    priorities,
+                )
                 if quality is None:
                     continue
                 lead.score = quality
