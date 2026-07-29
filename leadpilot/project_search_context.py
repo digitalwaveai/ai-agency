@@ -10,6 +10,7 @@ from telegram.ext import ContextTypes, ConversationHandler
 from .bot import MENU
 
 TARGET_SEPARATOR = " ||| "
+PRIORITY_SEPARATOR = " ||+ "
 EXCLUSION_SEPARATOR = " ||- "
 
 WORD_RE = re.compile(r"[a-zа-яё0-9]+(?:-[a-zа-яё0-9]+)?", re.IGNORECASE)
@@ -87,6 +88,28 @@ def _matches_exclusion(lead: Any, exclusions: str) -> bool:
     return any(group.issubset(lead_roots) for group in _exclusion_groups(exclusions))
 
 
+def _compose_search_target(
+    project: dict[str, Any],
+    segment: str,
+) -> str:
+    project_niche = str(project.get("niche") or "").strip()
+    priorities = str(project.get("priorities") or "").strip()
+    exclusions = str(project.get("exclusions") or "").strip()
+
+    target = segment.strip()
+    if (
+        project_niche
+        and _normalize(project_niche) not in _normalize(target)
+        and _normalize(target) not in _normalize(project_niche)
+    ):
+        target = f"{target}{TARGET_SEPARATOR}{project_niche}"
+    if priorities:
+        target = f"{target}{PRIORITY_SEPARATOR}{priorities}"
+    if exclusions:
+        target = f"{target}{EXCLUSION_SEPARATOR}{exclusions}"
+    return target
+
+
 def install_project_search_context(
     bot_class: type[Any], serpapi_class: type[Any]
 ) -> None:
@@ -133,24 +156,7 @@ def install_project_search_context(
         project = dict(context.user_data["search_project"])
         segment = str(context.user_data["search_segment"]).strip()
         region = str(context.user_data["search_region"]).strip()
-        project_niche = str(project.get("niche") or "").strip()
-        priorities = str(project.get("priorities") or "").strip()
-        exclusions = str(project.get("exclusions") or "").strip()
-
-        primary_parts = [segment]
-        if priorities and _normalize(priorities) not in _normalize(segment):
-            primary_parts.append(priorities)
-        primary = " ".join(primary_parts)
-
-        target = primary
-        if (
-            project_niche
-            and _normalize(project_niche) not in _normalize(primary)
-            and _normalize(primary) not in _normalize(project_niche)
-        ):
-            target = f"{primary}{TARGET_SEPARATOR}{project_niche}"
-        if exclusions:
-            target = f"{target}{EXCLUSION_SEPARATOR}{exclusions}"
+        target = _compose_search_target(project, segment)
 
         await query.message.reply_text(
             f"Ищу для проекта «{project['name']}»: {segment}, {region}. "
