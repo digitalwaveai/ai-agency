@@ -16,6 +16,7 @@ from .radar_menu_access_fix import install_radar_menu_access_fix
 from .role_policy import install_role_policy
 from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
+from .search_reliability import install_resilient_search
 from .serpapi import SerpApiClient
 from .trial_limits_guard import install_trial_limits_guard
 from .trial_radar_paywall import install_trial_radar_paywall
@@ -33,6 +34,7 @@ install_usage_limits(LeadPilotBot, Database)
 install_project_schema_hotfix(Database)
 install_search_quality(LeadPilotBot, SerpApiClient)
 install_project_search_context(LeadPilotBot, SerpApiClient)
+install_resilient_search(SerpApiClient)
 install_role_policy(LeadPilotBot)
 install_global_price_mode(LeadPilotBot)
 install_project_button_guard(LeadPilotBot)
