@@ -5,25 +5,18 @@ import unicodedata
 from functools import wraps
 from typing import Any
 
-from telegram import Update
-from telegram.ext import (
-    ApplicationHandlerStop,
-    ContextTypes,
-    MessageHandler,
-    filters,
-)
+from telegram.ext import ConversationHandler, filters
 
 from . import bot as bot_module
 
 
-PENDING_ACTION_KEY = "_lead_action_pending"
 ACTION_LEADS = "leads"
 ACTION_ANALYZE = "analyze"
 ACTION_MESSAGE = "message"
 
 
 def _button_key(value: object) -> str:
-    """Return only normalized words from Telegram reply-keyboard text."""
+    """Return normalized visible words from Telegram keyboard text."""
     text = unicodedata.normalize("NFKC", str(value or "")).casefold()
     text = (
         text.replace("\ufe0f", "")
@@ -32,93 +25,81 @@ def _button_key(value: object) -> str:
         .replace("\u200c", "")
         .replace("\u200d", " ")
         .replace("\u2060", "")
+        .replace("\ufeff", "")
     )
     text = re.sub(r"[^0-9a-zа-яё]+", " ", text, flags=re.IGNORECASE)
     return " ".join(text.split())
 
 
 def _action_from_text(value: object) -> str | None:
-    """Recognize lead buttons by their visible words, not by emoji bytes."""
-    key = _button_key(value)
     actions = {
         "мои лиды": ACTION_LEADS,
         "анализ клиента": ACTION_ANALYZE,
         "создать сообщение": ACTION_MESSAGE,
     }
-    return actions.get(key)
+    return actions.get(_button_key(value))
+
+
+def _semantic_body(value: object) -> str | None:
+    action = _action_from_text(value)
+    labels = {
+        ACTION_LEADS: "мои лиды",
+        ACTION_ANALYZE: "анализ клиента",
+        ACTION_MESSAGE: "создать сообщение",
+    }
+    label = labels.get(action)
+    if label is None:
+        return None
+
+    # Accept any emoji, variation selector, invisible character or spacing
+    # around and between the visible words of these three buttons.
+    separator = r"[\W_\u200b-\u200f\u2060\ufeff]*"
+    words = [re.escape(word) for word in label.split()]
+    return separator + separator.join(words) + separator
 
 
 def install_message_button_hotfix(bot_class: type[Any]) -> None:
-    """Route the three lead actions before competing conversation handlers."""
-    if getattr(bot_class, "_lead_action_router_v4_installed", False):
+    """Fix the core filters and menu dispatcher for the three lead buttons."""
+    if getattr(bot_class, "_core_lead_button_routing_installed", False):
         return
 
-    original_build_application = bot_class.build_application
-    menu_keys = {_button_key(value) for value in bot_module.MENU_BUTTONS}
+    original_button_pattern = bot_module._button_pattern
+    original_navigate_menu = bot_class.navigate_menu
 
-    async def route_lead_actions(
-        self: Any,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-    ) -> None:
+    def button_pattern(text: str) -> str:
+        semantic = _semantic_body(text)
+        if semantic is not None:
+            return rf"^(?iu:{semantic})$"
+        return original_button_pattern(text)
+
+    menu_bodies: list[str] = []
+    for item in bot_module.MENU_BUTTONS:
+        semantic = _semantic_body(item)
+        menu_bodies.append(semantic if semantic is not None else re.escape(item))
+
+    bot_module._button_pattern = button_pattern
+    bot_module.MENU_BUTTON_PATTERN = rf"^(?iu:(?:{'|'.join(menu_bodies)}))$"
+    bot_module.USER_INPUT_FILTER = (
+        filters.TEXT
+        & ~filters.COMMAND
+        & ~filters.Regex(bot_module.MENU_BUTTON_PATTERN)
+    )
+
+    @wraps(original_navigate_menu)
+    async def navigate_menu(self: Any, update: Any, context: Any) -> int:
         message = update.effective_message
-        if message is None:
-            return
+        action = _action_from_text(message.text if message else "")
+        if action is None:
+            return await original_navigate_menu(self, update, context)
 
-        text_key = _button_key(message.text)
-        action = _action_from_text(message.text)
-        pending = context.user_data.get(PENDING_ACTION_KEY)
+        context.user_data.clear()
+        handlers = {
+            ACTION_LEADS: self.list_leads,
+            ACTION_ANALYZE: self.analyze_start,
+            ACTION_MESSAGE: self.message_start,
+        }
+        result = await handlers[action](update, context)
+        return result if isinstance(result, int) else ConversationHandler.END
 
-        # Any menu button cancels the previous wait-for-ID state first.
-        if pending and text_key in menu_keys:
-            context.user_data.pop(PENDING_ACTION_KEY, None)
-            pending = None
-
-        if pending == ACTION_MESSAGE:
-            result = await self.receive_lead_id(update, context)
-            if result != bot_module.MESSAGE_LEAD_ID:
-                context.user_data.pop(PENDING_ACTION_KEY, None)
-            raise ApplicationHandlerStop()
-
-        if pending == ACTION_ANALYZE:
-            result = await self.receive_analyze_lead_id(update, context)
-            if result != bot_module.ANALYZE_LEAD_ID:
-                context.user_data.pop(PENDING_ACTION_KEY, None)
-            raise ApplicationHandlerStop()
-
-        if action == ACTION_LEADS:
-            context.user_data.pop(PENDING_ACTION_KEY, None)
-            await self.list_leads(update, context)
-            raise ApplicationHandlerStop()
-
-        if action == ACTION_ANALYZE:
-            result = await self.analyze_start(update, context)
-            if result == bot_module.ANALYZE_LEAD_ID:
-                context.user_data[PENDING_ACTION_KEY] = ACTION_ANALYZE
-            else:
-                context.user_data.pop(PENDING_ACTION_KEY, None)
-            raise ApplicationHandlerStop()
-
-        if action == ACTION_MESSAGE:
-            result = await self.message_start(update, context)
-            if result == bot_module.MESSAGE_LEAD_ID:
-                context.user_data[PENDING_ACTION_KEY] = ACTION_MESSAGE
-            else:
-                context.user_data.pop(PENDING_ACTION_KEY, None)
-            raise ApplicationHandlerStop()
-
-    @wraps(original_build_application)
-    def build_application(self: Any):
-        application = original_build_application(self)
-        application.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                self.route_lead_actions,
-            ),
-            group=-100,
-        )
-        return application
-
-    bot_class.route_lead_actions = route_lead_actions
-    bot_class.build_application = build_application
-    bot_class._lead_action_router_v4_installed = True
+    bot_class.navigate_menu = navigate_menu
+    bot_class._core_lead_button_routing_installed = True
