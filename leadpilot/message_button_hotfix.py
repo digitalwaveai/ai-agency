@@ -6,7 +6,6 @@ from typing import Any
 
 from telegram import Update
 from telegram.ext import (
-    ApplicationHandlerStop,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
@@ -16,69 +15,70 @@ from telegram.ext import (
 from . import bot as bot_module
 
 
-WAITING_FOR_LEAD_KEY = "_create_message_waiting_for_lead"
-
-
 def install_message_button_hotfix(bot_class: type[Any]) -> None:
-    """Route only the create-message button before competing conversations."""
-    if getattr(bot_class, "_message_button_hotfix_v2_installed", False):
+    """Restore the three lead-action buttons inside the main conversation."""
+    if getattr(bot_class, "_lead_action_buttons_hotfix_installed", False):
         return
 
     original_build_application = bot_class.build_application
 
-    async def start_from_button(
+    async def route_lead_action_button(
         self: Any,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> None:
-        result = await self.message_start(update, context)
-        if result == bot_module.MESSAGE_LEAD_ID:
-            context.user_data[WAITING_FOR_LEAD_KEY] = True
-        else:
-            context.user_data.pop(WAITING_FOR_LEAD_KEY, None)
-        raise ApplicationHandlerStop
-
-    async def receive_lead_after_button(
-        self: Any,
-        update: Update,
-        context: ContextTypes.DEFAULT_TYPE,
-    ) -> None:
-        if not context.user_data.get(WAITING_FOR_LEAD_KEY):
-            return
-
+    ) -> int:
         message = update.effective_message
         text = (message.text or "").strip() if message else ""
-        if text in bot_module.MENU_BUTTONS:
-            context.user_data.pop(WAITING_FOR_LEAD_KEY, None)
-            return
 
-        result = await self.receive_lead_id(update, context)
-        if result == ConversationHandler.END:
-            context.user_data.pop(WAITING_FOR_LEAD_KEY, None)
-        raise ApplicationHandlerStop
+        if text == bot_module.BUTTON_LEADS:
+            await self.list_leads(update, context)
+            return ConversationHandler.END
+        if text == bot_module.BUTTON_ANALYZE:
+            return await self.analyze_start(update, context)
+        if text == bot_module.BUTTON_MESSAGE:
+            return await self.message_start(update, context)
+        return ConversationHandler.END
 
     @wraps(original_build_application)
     def build_application(self: Any):
         application = original_build_application(self)
-        application.add_handler(
-            MessageHandler(
-                filters.Regex(
-                    rf"^{re.escape(bot_module.BUTTON_MESSAGE)}$"
+
+        main_conversation = None
+        for handler in application.handlers.get(0, []):
+            if not isinstance(handler, ConversationHandler):
+                continue
+            states = getattr(handler, "states", {})
+            if (
+                bot_module.MESSAGE_LEAD_ID in states
+                and bot_module.ANALYZE_LEAD_ID in states
+            ):
+                main_conversation = handler
+                break
+
+        if main_conversation is not None:
+            lead_buttons_pattern = rf"^(?:{'|'.join(re.escape(value) for value in (bot_module.BUTTON_LEADS, bot_module.BUTTON_ANALYZE, bot_module.BUTTON_MESSAGE))})$"
+            main_conversation.entry_points.insert(
+                0,
+                MessageHandler(
+                    filters.Regex(lead_buttons_pattern),
+                    self.route_lead_action_button,
                 ),
-                self.start_message_from_button,
-            ),
-            group=-10,
-        )
-        application.add_handler(
-            MessageHandler(
-                filters.TEXT & ~filters.COMMAND,
-                self.receive_message_lead_after_button,
-            ),
-            group=-10,
-        )
+            )
+            main_conversation.states[bot_module.MESSAGE_LEAD_ID] = [
+                MessageHandler(
+                    bot_module.USER_INPUT_FILTER,
+                    self.receive_lead_id,
+                )
+            ]
+            main_conversation.states[bot_module.ANALYZE_LEAD_ID] = [
+                MessageHandler(
+                    bot_module.USER_INPUT_FILTER,
+                    self.receive_analyze_lead_id,
+                )
+            ]
+
         return application
 
-    bot_class.start_message_from_button = start_from_button
-    bot_class.receive_message_lead_after_button = receive_lead_after_button
+    bot_class.route_lead_action_button = route_lead_action_button
     bot_class.build_application = build_application
-    bot_class._message_button_hotfix_v2_installed = True
+    bot_class._lead_action_buttons_hotfix_installed = True
