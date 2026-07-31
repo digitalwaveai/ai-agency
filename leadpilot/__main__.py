@@ -5,6 +5,7 @@ from .bot import LeadPilotBot, run
 from .database import Database
 from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
+from .message_button_hotfix import install_message_button_hotfix
 from .personal_lead_ids import install_personal_lead_ids
 from .personal_profile import install_personal_profile
 from .project_button_guard import install_project_button_guard
@@ -48,6 +49,7 @@ install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
+install_message_button_hotfix(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
