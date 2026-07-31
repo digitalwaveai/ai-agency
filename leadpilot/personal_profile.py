@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from functools import wraps
 from typing import Any
 
@@ -18,7 +19,7 @@ from telegram.ext import (
     MessageHandler,
 )
 
-from .bot import MENU, ROLE_LABELS, USER_INPUT_FILTER
+from .bot import MESSAGE_LEAD_ID, MENU, ROLE_LABELS, USER_INPUT_FILTER
 
 
 PROFILE_TEXT = 9100
@@ -40,54 +41,52 @@ def _clean_profile(value: object) -> str:
 
 def install_personal_profile(database_class: type[Any], bot_class: type[Any]) -> None:
     """Add a per-user profile used only for personalized outreach messages."""
-    if getattr(database_class, "_personal_profile_installed", False):
-        return
+    if not getattr(database_class, "_personal_profile_installed", False):
+        original_init_schema = database_class.init_schema
 
-    original_init_schema = database_class.init_schema
+        @wraps(original_init_schema)
+        def init_schema(self: Any) -> None:
+            original_init_schema(self)
+            statement = """
+                CREATE TABLE IF NOT EXISTS user_profiles (
+                    user_id BIGINT PRIMARY KEY,
+                    profile_text TEXT NOT NULL DEFAULT '',
+                    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+                )
+            """
+            with self._connect() as connection:  # noqa: SLF001 - project DB adapter
+                connection.execute(statement)
+                connection.commit()
 
-    @wraps(original_init_schema)
-    def init_schema(self: Any) -> None:
-        original_init_schema(self)
-        statement = """
-            CREATE TABLE IF NOT EXISTS user_profiles (
-                user_id BIGINT PRIMARY KEY,
-                profile_text TEXT NOT NULL DEFAULT '',
-                created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+        def get_user_profile(self: Any, user_id: int) -> str:
+            statement = self._sql(
+                "SELECT profile_text FROM user_profiles WHERE user_id = ?"
             )
-        """
-        with self._connect() as connection:  # noqa: SLF001 - project DB adapter
-            connection.execute(statement)
-            connection.commit()
+            with self._connect() as connection:  # noqa: SLF001
+                row = connection.execute(statement, (user_id,)).fetchone()
+            return _clean_profile(row["profile_text"] if row else "")
 
-    def get_user_profile(self: Any, user_id: int) -> str:
-        statement = self._sql(
-            "SELECT profile_text FROM user_profiles WHERE user_id = ?"
-        )
-        with self._connect() as connection:  # noqa: SLF001
-            row = connection.execute(statement, (user_id,)).fetchone()
-        return _clean_profile(row["profile_text"] if row else "")
+        def set_user_profile(self: Any, user_id: int, profile_text: str) -> str:
+            cleaned = _clean_profile(profile_text)
+            statement = self._sql(
+                """
+                INSERT INTO user_profiles (user_id, profile_text)
+                VALUES (?, ?)
+                ON CONFLICT(user_id) DO UPDATE SET
+                    profile_text = excluded.profile_text,
+                    updated_at = CURRENT_TIMESTAMP
+                """
+            )
+            with self._connect() as connection:  # noqa: SLF001
+                connection.execute(statement, (user_id, cleaned))
+                connection.commit()
+            return cleaned
 
-    def set_user_profile(self: Any, user_id: int, profile_text: str) -> str:
-        cleaned = _clean_profile(profile_text)
-        statement = self._sql(
-            """
-            INSERT INTO user_profiles (user_id, profile_text)
-            VALUES (?, ?)
-            ON CONFLICT(user_id) DO UPDATE SET
-                profile_text = excluded.profile_text,
-                updated_at = CURRENT_TIMESTAMP
-            """
-        )
-        with self._connect() as connection:  # noqa: SLF001
-            connection.execute(statement, (user_id, cleaned))
-            connection.commit()
-        return cleaned
-
-    database_class.init_schema = init_schema
-    database_class.get_user_profile = get_user_profile
-    database_class.set_user_profile = set_user_profile
-    database_class._personal_profile_installed = True
+        database_class.init_schema = init_schema
+        database_class.get_user_profile = get_user_profile
+        database_class.set_user_profile = set_user_profile
+        database_class._personal_profile_installed = True
 
     if getattr(bot_class, "_personal_profile_installed", False):
         return
@@ -161,9 +160,7 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
         self.ensure_account(update)
         context.user_data.clear()
         current = await asyncio.to_thread(self.db.get_user_profile, user.id)
-        current_text = (
-            f"\n\nСейчас указано:\n{current}" if current else ""
-        )
+        current_text = f"\n\nСейчас указано:\n{current}" if current else ""
         if query.message is not None:
             await query.message.reply_text(
                 "Кратко расскажите о себе: чем вы занимаетесь, что предлагаете "
@@ -231,9 +228,9 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> int:
-        lead = await self._lead_from_message(update, 4)
+        lead = await self._lead_from_message(update, MESSAGE_LEAD_ID)
         if lead is None:
-            return 4
+            return MESSAGE_LEAD_ID
 
         user = update.effective_user
         message = update.effective_message
@@ -249,8 +246,6 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
                 profile,
             )
         except Exception:
-            import logging
-
             logging.exception("Outreach generation failed")
             outreach = self.outreach.fallback(lead, profile)
             outreach += (
