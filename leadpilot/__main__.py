@@ -19,6 +19,7 @@ from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .search_reliability import install_resilient_search
 from .serpapi import SerpApiClient
+from .telegram_command_menu import install_telegram_command_menu
 from .trial_limits_guard import install_trial_limits_guard
 from .trial_radar_paywall import install_trial_radar_paywall
 from .usage_integrity import install_usage_integrity
@@ -48,6 +49,7 @@ install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
+install_telegram_command_menu(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
