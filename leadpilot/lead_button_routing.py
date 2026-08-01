@@ -5,7 +5,12 @@ import unicodedata
 from functools import wraps
 from typing import Any
 
-from telegram.ext import ConversationHandler, filters
+from telegram.ext import (
+    ApplicationHandlerStop,
+    ConversationHandler,
+    MessageHandler,
+    filters,
+)
 
 from . import bot as bot_module
 
@@ -15,6 +20,7 @@ TARGET_BUTTONS = {
     "анализ клиента": bot_module.BUTTON_ANALYZE,
     "создать сообщение": bot_module.BUTTON_MESSAGE,
 }
+ROUTING_GROUP = -200
 
 
 def button_key(value: object) -> str:
@@ -47,48 +53,91 @@ def semantic_body(value: object) -> str | None:
     return separator + separator.join(words) + separator
 
 
+def semantic_pattern(value: object) -> str:
+    body = semantic_body(value)
+    if body is None:
+        raise ValueError(f"Unsupported lead button: {value!r}")
+    return rf"^(?iu:{body})$"
+
+
+def _next_state(result: object) -> int:
+    return result if isinstance(result, int) else ConversationHandler.END
+
+
 def install_lead_button_routing(bot_class: type[Any]) -> None:
-    """Make the three lead action buttons route by visible text, not bytes."""
+    """Give the three lead actions their own highest-priority conversation."""
     if getattr(bot_class, "_lead_button_routing_installed", False):
         return
 
-    original_button_pattern = bot_module._button_pattern
-    original_navigate_menu = bot_class.navigate_menu
+    original_build_application = bot_class.build_application
 
-    def button_pattern(text: str) -> str:
-        body = semantic_body(text)
-        if body is not None:
-            return rf"^(?iu:{body})$"
-        return original_button_pattern(text)
-
-    menu_bodies: list[str] = []
-    for item in bot_module.MENU_BUTTONS:
-        body = semantic_body(item)
-        menu_bodies.append(body if body is not None else re.escape(item))
-
-    bot_module._button_pattern = button_pattern
-    bot_module.MENU_BUTTON_PATTERN = rf"^(?iu:(?:{'|'.join(menu_bodies)}))$"
-    bot_module.USER_INPUT_FILTER = (
-        filters.TEXT
-        & ~filters.COMMAND
-        & ~filters.Regex(bot_module.MENU_BUTTON_PATTERN)
-    )
-
-    @wraps(original_navigate_menu)
-    async def navigate_menu(self: Any, update: Any, context: Any) -> int:
-        message = update.effective_message
-        canonical = canonical_button(message.text if message else "")
-        if canonical is None:
-            return await original_navigate_menu(self, update, context)
-
+    async def open_leads(self: Any, update: Any, context: Any) -> None:
         context.user_data.clear()
-        handlers = {
-            bot_module.BUTTON_LEADS: self.list_leads,
-            bot_module.BUTTON_ANALYZE: self.analyze_start,
-            bot_module.BUTTON_MESSAGE: self.message_start,
-        }
-        result = await handlers[canonical](update, context)
-        return result if isinstance(result, int) else ConversationHandler.END
+        await self.list_leads(update, context)
+        raise ApplicationHandlerStop(ConversationHandler.END)
 
-    bot_class.navigate_menu = navigate_menu
+    async def open_analysis(self: Any, update: Any, context: Any) -> None:
+        context.user_data.clear()
+        result = await self.analyze_start(update, context)
+        raise ApplicationHandlerStop(_next_state(result))
+
+    async def open_message(self: Any, update: Any, context: Any) -> None:
+        context.user_data.clear()
+        result = await self.message_start(update, context)
+        raise ApplicationHandlerStop(_next_state(result))
+
+    async def receive_analysis_id(self: Any, update: Any, context: Any) -> None:
+        result = await self.receive_analyze_lead_id(update, context)
+        raise ApplicationHandlerStop(_next_state(result))
+
+    async def receive_message_id(self: Any, update: Any, context: Any) -> None:
+        result = await self.receive_lead_id(update, context)
+        raise ApplicationHandlerStop(_next_state(result))
+
+    @wraps(original_build_application)
+    def build_application(self: Any):
+        application = original_build_application(self)
+        application.add_handler(
+            ConversationHandler(
+                entry_points=[
+                    MessageHandler(
+                        filters.Regex(semantic_pattern(bot_module.BUTTON_LEADS)),
+                        self.open_leads_button,
+                    ),
+                    MessageHandler(
+                        filters.Regex(semantic_pattern(bot_module.BUTTON_ANALYZE)),
+                        self.open_analysis_button,
+                    ),
+                    MessageHandler(
+                        filters.Regex(semantic_pattern(bot_module.BUTTON_MESSAGE)),
+                        self.open_message_button,
+                    ),
+                ],
+                states={
+                    bot_module.ANALYZE_LEAD_ID: [
+                        MessageHandler(
+                            bot_module.USER_INPUT_FILTER,
+                            self.receive_analysis_button_id,
+                        )
+                    ],
+                    bot_module.MESSAGE_LEAD_ID: [
+                        MessageHandler(
+                            bot_module.USER_INPUT_FILTER,
+                            self.receive_message_button_id,
+                        )
+                    ],
+                },
+                fallbacks=[],
+                allow_reentry=True,
+            ),
+            group=ROUTING_GROUP,
+        )
+        return application
+
+    bot_class.open_leads_button = open_leads
+    bot_class.open_analysis_button = open_analysis
+    bot_class.open_message_button = open_message
+    bot_class.receive_analysis_button_id = receive_analysis_id
+    bot_class.receive_message_button_id = receive_message_id
+    bot_class.build_application = build_application
     bot_class._lead_button_routing_installed = True
