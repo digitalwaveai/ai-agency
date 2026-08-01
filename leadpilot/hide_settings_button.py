@@ -32,6 +32,14 @@ def visible_menu_rows() -> list[list[str]]:
     ]
 
 
+async def register_telegram_command_menu(application: Any) -> None:
+    """Register slash commands in Telegram's menu beside the input field."""
+    await application.bot.set_my_commands(TELEGRAM_COMMAND_MENU)
+    await application.bot.set_chat_menu_button(
+        menu_button=MenuButtonCommands()
+    )
+
+
 def install_hide_settings_button(bot_class: type[Any]) -> None:
     """Keep the normal keyboard and expose lead actions in Telegram's menu."""
     if getattr(bot_class, "_settings_button_hidden", False):
@@ -75,10 +83,7 @@ def install_hide_settings_button(bot_class: type[Any]) -> None:
         async def post_init(app: Any) -> None:
             if previous_post_init is not None:
                 await previous_post_init(app)
-            await app.bot.set_my_commands(TELEGRAM_COMMAND_MENU)
-            await app.bot.set_chat_menu_button(
-                menu_button=MenuButtonCommands()
-            )
+            await register_telegram_command_menu(app)
 
         application.post_init = post_init
         return application
