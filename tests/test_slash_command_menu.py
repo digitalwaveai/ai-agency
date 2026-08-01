@@ -1,34 +1,51 @@
 import unittest
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
+from telegram import MenuButtonCommands
+
+from leadpilot import bot as bot_module
 from leadpilot.hide_settings_button import (
-    ANALYZE_COMMAND_BUTTON,
-    LEADS_COMMAND_BUTTON,
-    MESSAGE_COMMAND_BUTTON,
+    TELEGRAM_COMMAND_MENU,
+    register_telegram_command_menu,
     visible_menu_rows,
 )
 
 
-class SlashCommandMenuTests(unittest.TestCase):
-    def test_lead_actions_are_exact_working_commands(self):
-        self.assertEqual(LEADS_COMMAND_BUTTON, "/leads")
-        self.assertEqual(ANALYZE_COMMAND_BUTTON, "/analyze")
-        self.assertEqual(MESSAGE_COMMAND_BUTTON, "/message")
-
-    def test_menu_contains_each_command_once(self):
+class TelegramCommandMenuTests(unittest.TestCase):
+    def test_reply_keyboard_uses_original_visible_buttons(self):
         flattened = [button for row in visible_menu_rows() for button in row]
-        for command in (
-            LEADS_COMMAND_BUTTON,
-            ANALYZE_COMMAND_BUTTON,
-            MESSAGE_COMMAND_BUTTON,
-        ):
-            with self.subTest(command=command):
-                self.assertEqual(flattened.count(command), 1)
+        self.assertIn(bot_module.BUTTON_LEADS, flattened)
+        self.assertIn(bot_module.BUTTON_ANALYZE, flattened)
+        self.assertIn(bot_module.BUTTON_MESSAGE, flattened)
+        self.assertNotIn("/leads", flattened)
+        self.assertNotIn("/analyze", flattened)
+        self.assertNotIn("/message", flattened)
 
-    def test_old_text_buttons_are_not_shown_for_these_actions(self):
-        flattened = [button for row in visible_menu_rows() for button in row]
-        self.assertNotIn("📋 Мои лиды", flattened)
-        self.assertNotIn("💎 Анализ клиента", flattened)
-        self.assertNotIn("✉️ Создать сообщение", flattened)
+    def test_telegram_menu_contains_three_slash_commands(self):
+        commands = [item.command for item in TELEGRAM_COMMAND_MENU]
+        descriptions = [item.description for item in TELEGRAM_COMMAND_MENU]
+        self.assertEqual(commands, ["leads", "analyze", "message"])
+        self.assertEqual(
+            descriptions,
+            ["Мои лиды", "Анализ клиента", "Создать сообщение"],
+        )
+
+
+class TelegramCommandMenuRegistrationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_registration_uses_telegram_command_menu_button(self):
+        bot = SimpleNamespace(
+            set_my_commands=AsyncMock(),
+            set_chat_menu_button=AsyncMock(),
+        )
+        application = SimpleNamespace(bot=bot)
+
+        await register_telegram_command_menu(application)
+
+        bot.set_my_commands.assert_awaited_once_with(TELEGRAM_COMMAND_MENU)
+        bot.set_chat_menu_button.assert_awaited_once()
+        menu_button = bot.set_chat_menu_button.await_args.kwargs["menu_button"]
+        self.assertIsInstance(menu_button, MenuButtonCommands)
 
 
 if __name__ == "__main__":
