@@ -20,6 +20,7 @@ from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .search_reliability import install_resilient_search
 from .serpapi import SerpApiClient
+from .single_instance import run_single_telegram_poller
 from .trial_limits_guard import install_trial_limits_guard
 from .trial_radar_paywall import install_trial_radar_paywall
 from .usage_integrity import install_usage_integrity
@@ -59,4 +60,4 @@ bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
 
 
 if __name__ == "__main__":
-    run()
+    run_single_telegram_poller(run)
