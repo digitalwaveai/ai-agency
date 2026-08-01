@@ -5,6 +5,7 @@ from .bot import LeadPilotBot, run
 from .database import Database
 from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
+from .niche_profile import install_niche_profile
 from .personal_lead_ids import install_personal_lead_ids
 from .project_button_guard import install_project_button_guard
 from .project_questionnaires import install_project_questionnaires
@@ -27,6 +28,7 @@ from .user_commands import install_user_commands
 
 install_beta_access(LeadPilotBot, Database)
 install_personal_lead_ids(Database)
+install_niche_profile(Database, LeadPilotBot)
 install_project_questionnaires(LeadPilotBot, Database)
 install_project_radars(LeadPilotBot, Database)
 install_analysis_insights(LeadPilotBot, Database)
