@@ -13,7 +13,7 @@ from leadpilot.telegram_command_menu import (
 
 
 class TelegramCommandMenuTests(unittest.TestCase):
-    def test_full_default_menu_contains_core_commands(self):
+    def test_default_menu_contains_only_user_facing_commands(self):
         commands = [item.command for item in DEFAULT_COMMANDS]
         for command in (
             "start",
@@ -35,12 +35,33 @@ class TelegramCommandMenuTests(unittest.TestCase):
             with self.subTest(command=command):
                 self.assertIn(command, commands)
 
-    def test_owner_menu_keeps_default_and_owner_commands(self):
-        default = {item.command for item in DEFAULT_COMMANDS}
-        owner = {item.command for item in OWNER_COMMANDS}
-        self.assertTrue(default.issubset(owner))
-        self.assertIn("users", owner)
-        self.assertIn("price_mode", owner)
+        for hidden in (
+            "users",
+            "price_mode",
+            "owner_admin",
+            "owner_revoke_admin",
+            "admin_beta",
+            "admin_user",
+        ):
+            with self.subTest(hidden=hidden):
+                self.assertNotIn(hidden, commands)
+
+    def test_owner_menu_adds_only_users(self):
+        default = [item.command for item in DEFAULT_COMMANDS]
+        owner = [item.command for item in OWNER_COMMANDS]
+        self.assertEqual(owner[:-1], default)
+        self.assertEqual(owner[-1], "users")
+        for hidden in (
+            "price_mode",
+            "owner_admin",
+            "owner_revoke_admin",
+            "admin_beta",
+            "admin_user",
+        ):
+            self.assertNotIn(hidden, owner)
+
+    def test_help_is_visible_to_everyone(self):
+        self.assertIn("help", [item.command for item in DEFAULT_COMMANDS])
 
     def test_reply_keyboard_contains_labels_not_slash_commands(self):
         root = Path(__file__).resolve().parents[1]
