@@ -5,7 +5,6 @@ from .bot import LeadPilotBot, run
 from .database import Database
 from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
-from .lead_button_routing import install_lead_button_routing
 from .niche_profile import install_niche_profile
 from .personal_lead_ids import install_personal_lead_ids
 from .project_button_guard import install_project_button_guard
@@ -20,7 +19,7 @@ from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .search_reliability import install_resilient_search
 from .serpapi import SerpApiClient
-from .single_instance import run_single_telegram_poller
+from .telegram_command_menu import install_telegram_command_menu
 from .trial_limits_guard import install_trial_limits_guard
 from .trial_radar_paywall import install_trial_radar_paywall
 from .usage_integrity import install_usage_integrity
@@ -50,7 +49,7 @@ install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
-install_lead_button_routing(LeadPilotBot)
+install_telegram_command_menu(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
@@ -60,4 +59,4 @@ bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
 
 
 if __name__ == "__main__":
-    run_single_telegram_poller(run)
+    run()
