@@ -36,13 +36,11 @@ DEFAULT_COMMANDS = (
     BotCommand("cancel", "Отменить текущий шаг"),
 )
 
+# Владелец видит те же основные команды и только одну дополнительную — /users.
+# Команды назначения ролей и переключения цен остаются рабочими вручную,
+# но намеренно не показываются в меню Telegram.
 OWNER_COMMANDS = DEFAULT_COMMANDS + (
     BotCommand("users", "Пользователи, тарифы и лимиты"),
-    BotCommand("price_mode", "Переключить режим цен"),
-    BotCommand("owner_admin", "Назначить администратора"),
-    BotCommand("owner_revoke_admin", "Снять администратора"),
-    BotCommand("admin_beta", "Назначить бета-тестера"),
-    BotCommand("admin_user", "Вернуть роль пользователя"),
 )
 
 
@@ -50,7 +48,7 @@ async def register_command_menu(
     application: Any,
     owner_user_id: int | None,
 ) -> None:
-    """Restore the complete Telegram command list and its menu button."""
+    """Restore the basic Telegram command list and its menu button."""
     await application.bot.set_my_commands(DEFAULT_COMMANDS)
     await application.bot.set_chat_menu_button(
         menu_button=MenuButtonCommands(),
@@ -82,7 +80,7 @@ async def ensure_chat_menu_button(update: Update, context: Any) -> None:
 
 
 def install_telegram_command_menu(bot_class: type[Any]) -> None:
-    """Install the complete slash-command menu without changing reply buttons."""
+    """Install the basic slash-command menu without changing reply buttons."""
     if getattr(bot_class, "_telegram_command_menu_installed", False):
         return
 
