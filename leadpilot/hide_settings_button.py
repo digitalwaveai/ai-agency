@@ -2,27 +2,30 @@ from __future__ import annotations
 
 import re
 import sys
+from functools import wraps
 from typing import Any
 
-from telegram import ReplyKeyboardMarkup
+from telegram import BotCommand, MenuButtonCommands, ReplyKeyboardMarkup
 from telegram.ext import filters
 
 from . import bot as bot_module
 
 
-LEADS_COMMAND_BUTTON = "/leads"
-ANALYZE_COMMAND_BUTTON = "/analyze"
-MESSAGE_COMMAND_BUTTON = "/message"
+TELEGRAM_COMMAND_MENU = (
+    BotCommand("leads", "Мои лиды"),
+    BotCommand("analyze", "Анализ клиента"),
+    BotCommand("message", "Создать сообщение"),
+)
 
 
 def visible_menu_rows() -> list[list[str]]:
-    """Build the menu; three lead actions use their working slash commands."""
+    """Build the regular reply keyboard with the original visible labels."""
     return [
         [bot_module.BUTTON_NEW_PROJECT, bot_module.BUTTON_PROJECTS],
-        [bot_module.BUTTON_SEARCH, LEADS_COMMAND_BUTTON],
+        [bot_module.BUTTON_SEARCH, bot_module.BUTTON_LEADS],
         [bot_module.BUTTON_PIPELINE, bot_module.BUTTON_EXPORT],
         [bot_module.BUTTON_ANALYTICS],
-        [ANALYZE_COMMAND_BUTTON, MESSAGE_COMMAND_BUTTON],
+        [bot_module.BUTTON_ANALYZE, bot_module.BUTTON_MESSAGE],
         [bot_module.BUTTON_RADARS, bot_module.BUTTON_LIMITS],
         [bot_module.BUTTON_PLANS],
         [bot_module.BUTTON_SUPPORT],
@@ -30,7 +33,7 @@ def visible_menu_rows() -> list[list[str]]:
 
 
 def install_hide_settings_button(bot_class: type[Any]) -> None:
-    """Remove settings and expose reliable command-backed lead buttons."""
+    """Keep the normal keyboard and expose lead actions in Telegram's menu."""
     if getattr(bot_class, "_settings_button_hidden", False):
         return
 
@@ -62,4 +65,23 @@ def install_hide_settings_button(bot_class: type[Any]) -> None:
         if getattr(module, "MENU", None) is old_menu:
             setattr(module, "MENU", new_menu)
 
+    original_build_application = bot_class.build_application
+
+    @wraps(original_build_application)
+    def build_application(self: Any):
+        application = original_build_application(self)
+        previous_post_init = application.post_init
+
+        async def post_init(app: Any) -> None:
+            if previous_post_init is not None:
+                await previous_post_init(app)
+            await app.bot.set_my_commands(TELEGRAM_COMMAND_MENU)
+            await app.bot.set_chat_menu_button(
+                menu_button=MenuButtonCommands()
+            )
+
+        application.post_init = post_init
+        return application
+
+    bot_class.build_application = build_application
     bot_class._settings_button_hidden = True
