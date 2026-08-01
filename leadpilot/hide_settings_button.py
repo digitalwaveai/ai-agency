@@ -10,8 +10,27 @@ from telegram.ext import filters
 from . import bot as bot_module
 
 
+LEADS_COMMAND_BUTTON = "/leads"
+ANALYZE_COMMAND_BUTTON = "/analyze"
+MESSAGE_COMMAND_BUTTON = "/message"
+
+
+def visible_menu_rows() -> list[list[str]]:
+    """Build the menu; three lead actions use their working slash commands."""
+    return [
+        [bot_module.BUTTON_NEW_PROJECT, bot_module.BUTTON_PROJECTS],
+        [bot_module.BUTTON_SEARCH, LEADS_COMMAND_BUTTON],
+        [bot_module.BUTTON_PIPELINE, bot_module.BUTTON_EXPORT],
+        [bot_module.BUTTON_ANALYTICS],
+        [ANALYZE_COMMAND_BUTTON, MESSAGE_COMMAND_BUTTON],
+        [bot_module.BUTTON_RADARS, bot_module.BUTTON_LIMITS],
+        [bot_module.BUTTON_PLANS],
+        [bot_module.BUTTON_SUPPORT],
+    ]
+
+
 def install_hide_settings_button(bot_class: type[Any]) -> None:
-    """Remove the technical settings button from every visible reply keyboard."""
+    """Remove settings and expose reliable command-backed lead buttons."""
     if getattr(bot_class, "_settings_button_hidden", False):
         return
 
@@ -23,16 +42,7 @@ def install_hide_settings_button(bot_class: type[Any]) -> None:
     )
     new_pattern = rf"^(?:{'|'.join(re.escape(item) for item in visible_buttons)})$"
     new_menu = ReplyKeyboardMarkup(
-        [
-            [bot_module.BUTTON_NEW_PROJECT, bot_module.BUTTON_PROJECTS],
-            [bot_module.BUTTON_SEARCH, bot_module.BUTTON_LEADS],
-            [bot_module.BUTTON_PIPELINE, bot_module.BUTTON_EXPORT],
-            [bot_module.BUTTON_ANALYTICS],
-            [bot_module.BUTTON_ANALYZE, bot_module.BUTTON_MESSAGE],
-            [bot_module.BUTTON_RADARS, bot_module.BUTTON_LIMITS],
-            [bot_module.BUTTON_PLANS],
-            [bot_module.BUTTON_SUPPORT],
-        ],
+        visible_menu_rows(),
         resize_keyboard=True,
         input_field_placeholder="Выберите действие",
     )
