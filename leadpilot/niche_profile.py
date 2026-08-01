@@ -12,36 +12,39 @@ from telegram import (
     Update,
 )
 from telegram.ext import (
+    ApplicationHandlerStop,
     CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     ConversationHandler,
     MessageHandler,
+    filters,
 )
 
-from .bot import MESSAGE_LEAD_ID, MENU, ROLE_LABELS, USER_INPUT_FILTER
+from .bot import MESSAGE_LEAD_ID, MENU, ROLE_LABELS
 
 
-PROFILE_TEXT = 9100
-PROFILE_EDIT_CALLBACK = "personal_profile:edit"
-PROFILE_MIN_LENGTH = 10
-PROFILE_MAX_LENGTH = 1000
+NICHE_CALLBACK = "niche_profile:add"
+NICHE_PENDING_KEY = "_niche_profile_pending"
+NICHE_MIN_LENGTH = 5
+NICHE_MAX_LENGTH = 1000
 
 
-def _profile_keyboard(filled: bool) -> InlineKeyboardMarkup:
-    label = "✏️ Изменить нишу" if filled else "✍️ Заполнить нишу"
-    return InlineKeyboardMarkup(
-        [[InlineKeyboardButton(label, callback_data=PROFILE_EDIT_CALLBACK)]]
-    )
-
-
-def _clean_profile(value: object) -> str:
+def clean_niche(value: object) -> str:
+    """Normalize a user's description without changing its meaning."""
     return " ".join(str(value or "").split()).strip()
 
 
-def install_personal_profile(database_class: type[Any], bot_class: type[Any]) -> None:
-    """Add a per-user profile used only for personalized outreach messages."""
-    if not getattr(database_class, "_personal_profile_installed", False):
+def niche_keyboard(filled: bool) -> InlineKeyboardMarkup:
+    label = "✏️ Изменить нишу" if filled else "➕ Добавить нишу"
+    return InlineKeyboardMarkup(
+        [[InlineKeyboardButton(label, callback_data=NICHE_CALLBACK)]]
+    )
+
+
+def install_niche_profile(database_class: type[Any], bot_class: type[Any]) -> None:
+    """Add per-user niche storage and use it only in outreach generation."""
+    if not getattr(database_class, "_niche_profile_storage_installed", False):
         original_init_schema = database_class.init_schema
 
         @wraps(original_init_schema)
@@ -55,20 +58,20 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
                     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
                 )
             """
-            with self._connect() as connection:  # noqa: SLF001 - project DB adapter
+            with self._connect() as connection:  # noqa: SLF001
                 connection.execute(statement)
                 connection.commit()
 
-        def get_user_profile(self: Any, user_id: int) -> str:
+        def get_user_niche(self: Any, user_id: int) -> str:
             statement = self._sql(
                 "SELECT profile_text FROM user_profiles WHERE user_id = ?"
             )
             with self._connect() as connection:  # noqa: SLF001
                 row = connection.execute(statement, (user_id,)).fetchone()
-            return _clean_profile(row["profile_text"] if row else "")
+            return clean_niche(row["profile_text"] if row else "")
 
-        def set_user_profile(self: Any, user_id: int, profile_text: str) -> str:
-            cleaned = _clean_profile(profile_text)
+        def set_user_niche(self: Any, user_id: int, niche: str) -> str:
+            cleaned = clean_niche(niche)
             statement = self._sql(
                 """
                 INSERT INTO user_profiles (user_id, profile_text)
@@ -84,28 +87,30 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
             return cleaned
 
         database_class.init_schema = init_schema
-        database_class.get_user_profile = get_user_profile
-        database_class.set_user_profile = set_user_profile
-        database_class._personal_profile_installed = True
+        database_class.get_user_niche = get_user_niche
+        database_class.set_user_niche = set_user_niche
+        database_class._niche_profile_storage_installed = True
 
-    if getattr(bot_class, "_personal_profile_installed", False):
+    if getattr(bot_class, "_niche_profile_installed", False):
         return
+
+    original_build_application = bot_class.build_application
 
     async def start(
         self: Any,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
     ) -> None:
-        del context
         self.ensure_account(update)
         user = update.effective_user
         message = update.effective_message
         if user is None or message is None:
             return
 
+        context.user_data.pop(NICHE_PENDING_KEY, None)
         role = self.role(update)
-        access = await asyncio.to_thread(self.db.get_access_state, user.id)
-        profile = await asyncio.to_thread(self.db.get_user_profile, user.id)
+        access = self.db.get_access_state(user.id)
+        niche = await asyncio.to_thread(self.db.get_user_niche, user.id)
 
         if role in {"owner", "admin", "beta_tester"}:
             account_text = (
@@ -136,92 +141,94 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
                 "Откройте «⭐ Тарифы» для выбора тарифа."
             )
 
-        profile_text = profile or "не заполнено"
         await message.reply_text(
             "✨ LeadPilot AI\n\n"
             "AI-система поиска клиентов для специалистов и агентств.\n\n"
             f"{account_text}\n\n"
-            "🧩 Чем я занимаюсь:\n"
-            f"{profile_text}",
-            reply_markup=_profile_keyboard(bool(profile)),
+            "🧩 Ниша:\n"
+            f"{niche or 'не заполнена'}",
+            reply_markup=niche_keyboard(bool(niche)),
         )
         await message.reply_text("Выберите действие:", reply_markup=MENU)
 
-    async def profile_start(
+    async def niche_start(
         self: Any,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> int:
+    ) -> None:
         query = update.callback_query
         user = update.effective_user
         if query is None or user is None:
-            return ConversationHandler.END
+            return
+
         await query.answer()
         self.ensure_account(update)
-        context.user_data.clear()
-        current = await asyncio.to_thread(self.db.get_user_profile, user.id)
+        context.user_data[NICHE_PENDING_KEY] = True
+        current = await asyncio.to_thread(self.db.get_user_niche, user.id)
         current_text = f"\n\nСейчас указано:\n{current}" if current else ""
+
         if query.message is not None:
             await query.message.reply_text(
-                "Кратко расскажите о себе: чем вы занимаетесь, что предлагаете "
-                "клиентам и какую пользу им даёте.\n\n"
-                "Это нужно, чтобы бот составлял персональные первые сообщения "
-                "и правильно объяснял, кто вы и почему обращаетесь к клиенту."
+                "Напишите коротко о своём деле или нише: чем вы занимаетесь, "
+                "что предлагаете клиентам и какую пользу им даёте.\n\n"
+                "Это нужно, чтобы бот лучше создавал офферы по кнопке "
+                "«✉️ Создать сообщение»."
                 f"{current_text}\n\n"
-                f"Объём: от {PROFILE_MIN_LENGTH} до {PROFILE_MAX_LENGTH} символов.",
+                f"Объём: от {NICHE_MIN_LENGTH} до {NICHE_MAX_LENGTH} символов.",
                 reply_markup=ReplyKeyboardRemove(),
             )
-        return PROFILE_TEXT
+        raise ApplicationHandlerStop()
 
-    async def receive_profile(
+    async def receive_niche(
         self: Any,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> int:
+    ) -> None:
+        if not context.user_data.get(NICHE_PENDING_KEY):
+            return
+
         user = update.effective_user
         message = update.effective_message
         if user is None or message is None:
-            return ConversationHandler.END
-        profile = _clean_profile(message.text)
-        if len(profile) < PROFILE_MIN_LENGTH:
-            await message.reply_text(
-                "Слишком коротко. Напишите хотя бы одним предложением, чем вы "
-                "занимаетесь и чем полезны клиенту."
-            )
-            return PROFILE_TEXT
-        if len(profile) > PROFILE_MAX_LENGTH:
-            await message.reply_text(
-                f"Текст слишком длинный. Сократите его до {PROFILE_MAX_LENGTH} символов."
-            )
-            return PROFILE_TEXT
+            context.user_data.pop(NICHE_PENDING_KEY, None)
+            raise ApplicationHandlerStop()
 
-        saved = await asyncio.to_thread(
-            self.db.set_user_profile,
-            user.id,
-            profile,
-        )
-        context.user_data.clear()
+        niche = clean_niche(message.text)
+        if len(niche) < NICHE_MIN_LENGTH:
+            await message.reply_text(
+                "Напишите немного подробнее — хотя бы несколько слов о своём деле."
+            )
+            raise ApplicationHandlerStop()
+        if len(niche) > NICHE_MAX_LENGTH:
+            await message.reply_text(
+                f"Текст слишком длинный. Сократите его до {NICHE_MAX_LENGTH} символов."
+            )
+            raise ApplicationHandlerStop()
+
+        saved = await asyncio.to_thread(self.db.set_user_niche, user.id, niche)
+        context.user_data.pop(NICHE_PENDING_KEY, None)
         await message.reply_text(
-            "✅ Ниша заполнена\n\n"
-            f"Сохранено: {saved}\n\n"
-            "Теперь бот будет учитывать этот текст при создании персональных "
-            "сообщений клиентам.",
+            "✅ Ниша сохранена\n\n"
+            f"{saved}\n\n"
+            "Теперь бот будет учитывать её при создании офферов по кнопке "
+            "«✉️ Создать сообщение».",
             reply_markup=MENU,
         )
-        return ConversationHandler.END
+        raise ApplicationHandlerStop()
 
-    async def cancel_profile(
+    async def cancel_niche(
         self: Any,
         update: Update,
         context: ContextTypes.DEFAULT_TYPE,
-    ) -> int:
-        context.user_data.clear()
+    ) -> None:
+        if not context.user_data.get(NICHE_PENDING_KEY):
+            return
+        context.user_data.pop(NICHE_PENDING_KEY, None)
         if update.effective_message is not None:
             await update.effective_message.reply_text(
-                "Заполнение ниши отменено.",
-                reply_markup=MENU,
+                "Добавление ниши отменено.", reply_markup=MENU
             )
-        return ConversationHandler.END
+        raise ApplicationHandlerStop()
 
     async def receive_lead_id(
         self: Any,
@@ -236,53 +243,51 @@ def install_personal_profile(database_class: type[Any], bot_class: type[Any]) ->
         message = update.effective_message
         if user is None or message is None:
             return ConversationHandler.END
-        profile = await asyncio.to_thread(self.db.get_user_profile, user.id)
 
-        await message.reply_text("Готовлю персональное обращение…")
+        niche = await asyncio.to_thread(self.db.get_user_niche, user.id)
+        await message.reply_text("Готовлю черновик обращения…")
         try:
             outreach = await asyncio.to_thread(
                 self.outreach.generate,
                 lead,
-                profile,
+                niche,
             )
         except Exception:
             logging.exception("Outreach generation failed")
-            outreach = self.outreach.fallback(lead, profile)
+            outreach = self.outreach.fallback(lead, niche)
             outreach += (
                 "\n\nOpenAI временно не ответил, поэтому показан базовый черновик."
             )
         await message.reply_text(outreach, reply_markup=MENU)
         return ConversationHandler.END
 
-    original_build_application = bot_class.build_application
-
     @wraps(original_build_application)
     def build_application(self: Any):
         application = original_build_application(self)
         application.add_handler(
-            ConversationHandler(
-                entry_points=[
-                    CallbackQueryHandler(
-                        self.profile_start,
-                        pattern=rf"^{PROFILE_EDIT_CALLBACK}$",
-                    )
-                ],
-                states={
-                    PROFILE_TEXT: [
-                        MessageHandler(USER_INPUT_FILTER, self.receive_personal_profile)
-                    ]
-                },
-                fallbacks=[CommandHandler("cancel", self.cancel_personal_profile)],
-                allow_reentry=True,
+            CallbackQueryHandler(
+                self.niche_profile_start,
+                pattern=rf"^{NICHE_CALLBACK}$",
             ),
-            group=-2,
+            group=-100,
+        )
+        application.add_handler(
+            CommandHandler("cancel", self.cancel_niche_profile),
+            group=-100,
+        )
+        application.add_handler(
+            MessageHandler(
+                filters.TEXT & ~filters.COMMAND,
+                self.receive_niche_profile,
+            ),
+            group=-100,
         )
         return application
 
     bot_class.start = start
-    bot_class.profile_start = profile_start
-    bot_class.receive_personal_profile = receive_profile
-    bot_class.cancel_personal_profile = cancel_profile
+    bot_class.niche_profile_start = niche_start
+    bot_class.receive_niche_profile = receive_niche
+    bot_class.cancel_niche_profile = cancel_niche
     bot_class.receive_lead_id = receive_lead_id
     bot_class.build_application = build_application
-    bot_class._personal_profile_installed = True
+    bot_class._niche_profile_installed = True
