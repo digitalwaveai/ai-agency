@@ -3,32 +3,38 @@ from pathlib import Path
 
 
 class NicheRuntimeWiringTests(unittest.TestCase):
-    def test_core_bot_routing_file_is_not_modified_by_feature(self):
-        """The rebuild must not patch lead/menu routing in bot.py."""
+    def setUp(self):
         root = Path(__file__).resolve().parents[1]
-        source = (root / "leadpilot" / "niche_profile.py").read_text(encoding="utf-8")
+        self.source = (root / "leadpilot" / "niche_profile.py").read_text(
+            encoding="utf-8"
+        )
 
-        self.assertNotIn("navigate_menu", source)
-        self.assertNotIn("_button_pattern", source)
-        self.assertNotIn("BUTTON_LEADS", source)
-        self.assertNotIn("BUTTON_ANALYZE", source)
-        self.assertNotIn("BUTTON_MESSAGE", source)
+    def test_feature_does_not_patch_menu_button_routing(self):
+        self.assertNotIn("navigate_menu", self.source)
+        self.assertNotIn("_button_pattern", self.source)
+        self.assertNotIn("BUTTON_LEADS", self.source)
+        self.assertNotIn("BUTTON_ANALYZE", self.source)
+        self.assertNotIn("BUTTON_MESSAGE", self.source)
 
-    def test_niche_handlers_are_strictly_isolated(self):
-        root = Path(__file__).resolve().parents[1]
-        source = (root / "leadpilot" / "niche_profile.py").read_text(encoding="utf-8")
+    def test_niche_input_uses_one_real_conversation(self):
+        self.assertIn("ConversationHandler(", self.source)
+        self.assertIn('pattern=rf"^{NICHE_CALLBACK}$"', self.source)
+        self.assertIn("NICHE_INPUT_STATE", self.source)
+        self.assertIn("bot_module.USER_INPUT_FILTER", self.source)
+        self.assertEqual(self.source.count("group=-10"), 1)
 
-        self.assertIn('pattern=rf"^{NICHE_CALLBACK}$"', source)
-        self.assertEqual(source.count("group=-100"), 3)
-        self.assertIn("if not context.user_data.get(NICHE_PENDING_KEY):", source)
+    def test_niche_has_no_global_text_interceptor(self):
+        self.assertNotIn("NICHE_PENDING_KEY", self.source)
+        self.assertNotIn("ApplicationHandlerStop", self.source)
+        self.assertNotIn("filters.TEXT & ~filters.COMMAND", self.source)
 
     def test_create_message_flow_keeps_existing_lead_state(self):
-        root = Path(__file__).resolve().parents[1]
-        source = (root / "leadpilot" / "niche_profile.py").read_text(encoding="utf-8")
-
-        self.assertIn("self._lead_from_message(update, MESSAGE_LEAD_ID)", source)
-        self.assertIn("return MESSAGE_LEAD_ID", source)
-        self.assertIn("return ConversationHandler.END", source)
+        self.assertIn(
+            "self._lead_from_message(update, bot_module.MESSAGE_LEAD_ID)",
+            self.source,
+        )
+        self.assertIn("return bot_module.MESSAGE_LEAD_ID", self.source)
+        self.assertIn("return ConversationHandler.END", self.source)
 
 
 if __name__ == "__main__":
