@@ -5,9 +5,7 @@ from .bot import LeadPilotBot, run
 from .database import Database
 from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
-from .message_button_hotfix import install_message_button_hotfix
 from .personal_lead_ids import install_personal_lead_ids
-from .personal_profile import install_personal_profile
 from .project_button_guard import install_project_button_guard
 from .project_questionnaires import install_project_questionnaires
 from .project_radars import install_project_radars
@@ -37,7 +35,6 @@ install_project_schema_hotfix(Database)
 install_search_quality(LeadPilotBot, SerpApiClient)
 install_project_search_context(LeadPilotBot, SerpApiClient)
 install_resilient_search(SerpApiClient)
-install_personal_profile(Database, LeadPilotBot)
 install_role_policy(LeadPilotBot)
 install_global_price_mode(LeadPilotBot)
 install_project_button_guard(LeadPilotBot)
@@ -49,7 +46,6 @@ install_trial_limits_guard(LeadPilotBot)
 install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
-install_message_button_hotfix(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
