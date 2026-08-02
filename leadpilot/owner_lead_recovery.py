@@ -27,9 +27,7 @@ def _repair_user_leads(database: Any, user_id: int) -> None:
     normalize = database._sql(
         """
         UPDATE leads
-        SET name = COALESCE(name, ''),
-            source_url = COALESCE(source_url, ''),
-            website = COALESCE(website, ''),
+        SET website = COALESCE(website, ''),
             phone = COALESCE(phone, ''),
             address = COALESCE(address, ''),
             snippet = COALESCE(snippet, ''),
