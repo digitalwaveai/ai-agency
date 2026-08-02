@@ -8,7 +8,7 @@ from .hide_settings_button import install_hide_settings_button
 from .lead_action_buttons import install_lead_action_buttons
 from .niche_profile import install_niche_profile
 from .one_time_service_notice import install_one_time_service_notice
-from .owner_lead_recovery import install_owner_lead_recovery
+from .owner_emergency_actions import install_owner_emergency_actions
 from .personal_lead_ids import install_personal_lead_ids
 from .project_button_guard import install_project_button_guard
 from .project_questionnaires import install_project_questionnaires
@@ -53,8 +53,8 @@ install_hide_settings_button(LeadPilotBot)
 install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
 install_telegram_command_menu(LeadPilotBot)
-install_owner_lead_recovery(LeadPilotBot, Database)
 install_lead_action_buttons(LeadPilotBot)
+install_owner_emergency_actions(LeadPilotBot)
 install_one_time_service_notice(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
