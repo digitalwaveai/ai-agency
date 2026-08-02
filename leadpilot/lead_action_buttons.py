@@ -16,7 +16,7 @@ from telegram.ext import (
 from . import bot as bot_module
 
 
-ROUTING_GROUP = -50
+ROUTING_GROUP = -10000
 PENDING_KEY = "_lead_action_button_pending"
 ACTION_ANALYZE = "analyze"
 ACTION_MESSAGE = "message"
@@ -67,8 +67,6 @@ def install_lead_action_buttons(bot_class: type[Any]) -> None:
         key = _visible_words(message.text)
         pending = context.user_data.get(PENDING_KEY)
 
-        # Any menu button cancels the previous ID request. The selected button
-        # is then either handled below or passed to the normal menu handlers.
         if pending and key in menu_keys:
             context.user_data.pop(PENDING_KEY, None)
             pending = None
