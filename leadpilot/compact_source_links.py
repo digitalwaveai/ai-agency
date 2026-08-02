@@ -136,20 +136,20 @@ def _analysis_text(lead: Lead) -> str:
 
     text = (
         f"💎 Анализ клиента · ID {lead.id}\n\n"
-        f"Компания: {html.escape(_clip(lead.name, 300))}\n"
+        f"Компания: {_clip(lead.name, 300)}\n"
         f"Рейтинг: {int(lead.score)}/100\n"
-        f"Контакт: {html.escape(_clip(lead.contact, 500))}\n"
-        f"Адрес: {html.escape(_clip(lead.address or 'не найден', 500))}\n"
-        f"Описание: {html.escape(_clip(lead.snippet or 'нет данных', 1000))}\n\n"
-        f"Сильные сигналы: {html.escape(', '.join(strengths) or 'не обнаружены')}\n"
-        f"Что проверить: {html.escape(', '.join(gaps) or 'критичных пробелов нет')}\n\n"
+        f"Контакт: {_clip(lead.contact, 500)}\n"
+        f"Адрес: {_clip(lead.address or 'не найден', 500)}\n"
+        f"Описание: {_clip(lead.snippet or 'нет данных', 1000)}\n\n"
+        f"Сильные сигналы: {', '.join(strengths) or 'не обнаружены'}\n"
+        f"Что проверить: {', '.join(gaps) or 'критичных пробелов нет'}\n\n"
         "Следующий шаг: проверьте источник и подготовьте персональное "
         "сообщение без массовой рассылки."
     )
     if lead.source_url and not str(lead.source_url).startswith(
         ("demo://", "serpapi://")
     ):
-        text += f"\nИсточник: {_source_link(lead.source_url)}"
+        text += f"\nИсточник: {_source_label(str(lead.source_url))}"
     return text
 
 
