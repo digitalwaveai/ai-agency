@@ -2,6 +2,7 @@ from . import bot as bot_module
 from .analysis_insights import install_analysis_insights
 from .beta_access import install_beta_access
 from .bot import LeadPilotBot, run
+from .compact_source_links import install_compact_source_links
 from .database import Database
 from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
@@ -55,6 +56,7 @@ install_usage_integrity(Database)
 install_telegram_command_menu(LeadPilotBot)
 install_lead_action_buttons(LeadPilotBot)
 install_owner_emergency_actions(LeadPilotBot)
+install_compact_source_links()
 install_one_time_service_notice(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
