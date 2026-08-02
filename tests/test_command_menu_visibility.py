@@ -4,30 +4,32 @@ from leadpilot.telegram_command_menu import DEFAULT_COMMANDS, OWNER_COMMANDS
 
 
 class CommandMenuVisibilityTests(unittest.TestCase):
-    def test_regular_users_do_not_see_hidden_commands(self):
-        commands = {item.command for item in DEFAULT_COMMANDS}
+    def test_regular_user_menu_matches_compact_legacy_list_plus_help(self):
+        commands = [item.command for item in DEFAULT_COMMANDS]
 
-        self.assertNotIn("radar_run", commands)
-        self.assertNotIn("role", commands)
-        self.assertNotIn("status", commands)
-        self.assertNotIn("cancel", commands)
-        self.assertNotIn("users", commands)
+        self.assertEqual(
+            commands,
+            [
+                "start",
+                "menu",
+                "plans",
+                "limits",
+                "support",
+                "myid",
+                "help",
+            ],
+        )
 
-    def test_owner_sees_only_status_and_users_from_hidden_set(self):
-        commands = {item.command for item in OWNER_COMMANDS}
+    def test_owner_has_only_users_and_status_in_addition(self):
+        regular = [item.command for item in DEFAULT_COMMANDS]
+        owner = [item.command for item in OWNER_COMMANDS]
 
-        self.assertIn("status", commands)
-        self.assertIn("users", commands)
-        self.assertNotIn("radar_run", commands)
-        self.assertNotIn("role", commands)
-        self.assertNotIn("cancel", commands)
+        self.assertEqual(owner, regular + ["users", "status"])
 
-    def test_other_main_commands_remain_visible(self):
-        commands = {item.command for item in DEFAULT_COMMANDS}
+    def test_functional_commands_are_hidden_not_removed_from_bot(self):
+        visible = {item.command for item in DEFAULT_COMMANDS}
 
-        for expected in {
-            "start",
-            "menu",
+        for hidden in {
             "new_project",
             "projects",
             "find",
@@ -35,15 +37,13 @@ class CommandMenuVisibilityTests(unittest.TestCase):
             "analyze",
             "message",
             "radars",
+            "radar_run",
             "export",
             "analytics",
-            "plans",
-            "limits",
-            "support",
-            "myid",
-            "help",
+            "role",
+            "cancel",
         }:
-            self.assertIn(expected, commands)
+            self.assertNotIn(hidden, visible)
 
 
 if __name__ == "__main__":
