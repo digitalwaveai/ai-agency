@@ -23,23 +23,20 @@ DEFAULT_COMMANDS = (
     BotCommand("analyze", "Анализ клиента"),
     BotCommand("message", "Создать сообщение"),
     BotCommand("radars", "Создать радар"),
-    BotCommand("radar_run", "Запустить радар по ID"),
     BotCommand("export", "Экспортировать лиды"),
     BotCommand("analytics", "Аналитика лидов"),
     BotCommand("plans", "Тарифы"),
     BotCommand("limits", "Мои лимиты"),
     BotCommand("support", "Поддержка"),
-    BotCommand("role", "Моя роль"),
-    BotCommand("status", "Проверить работу бота"),
     BotCommand("myid", "Показать Telegram ID"),
     BotCommand("help", "Справка по командам"),
-    BotCommand("cancel", "Отменить текущий шаг"),
 )
 
-# Владелец видит те же основные команды и только одну дополнительную — /users.
-# Команды назначения ролей и переключения цен остаются рабочими вручную,
-# но намеренно не показываются в меню Telegram.
+# Владелец видит обычное пользовательское меню и дополнительно /status и /users.
+# /radar_run, /role и /cancel остаются рабочими при ручном вводе, но не
+# показываются в меню Telegram ни у владельца, ни у обычных пользователей.
 OWNER_COMMANDS = DEFAULT_COMMANDS + (
+    BotCommand("status", "Проверить работу бота"),
     BotCommand("users", "Пользователи, тарифы и лимиты"),
 )
 
