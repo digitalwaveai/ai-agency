@@ -2,7 +2,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from unittest.mock import Mock
 
 from leadpilot.database import Database
 from leadpilot.lead_action_buttons import ROUTING_GROUP
@@ -81,7 +81,7 @@ class OwnerLeadDataRepairTests(unittest.TestCase):
 class FakeBot:
     def __init__(self, owner: bool):
         self.owner = owner
-        self.db = SimpleNamespace(repair_user_leads=AsyncMock())
+        self.db = SimpleNamespace(repair_user_leads=Mock())
 
     def is_owner(self, update):
         return self.owner
@@ -115,8 +115,8 @@ class OwnerLeadWrapperTests(unittest.IsolatedAsyncioTestCase):
         await owner.list_leads(update, context)
         await regular.list_leads(update, context)
 
-        owner.db.repair_user_leads.assert_awaited_once_with(123)
-        regular.db.repair_user_leads.assert_not_awaited()
+        owner.db.repair_user_leads.assert_called_once_with(123)
+        regular.db.repair_user_leads.assert_not_called()
 
     def test_button_router_has_absolute_priority(self):
         self.assertLessEqual(ROUTING_GROUP, -10000)
