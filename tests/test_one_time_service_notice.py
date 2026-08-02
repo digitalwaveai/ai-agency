@@ -71,11 +71,19 @@ class OneTimeServiceNoticeTests(unittest.IsolatedAsyncioTestCase):
         statuses = {int(row["user_id"]): str(row["status"]) for row in rows}
         self.assertEqual(statuses, {101: "failed", 202: "sent"})
 
-    def test_notice_text_names_exactly_three_unavailable_functions(self):
+    def test_notice_announces_restored_functions(self):
+        self.assertIn("Работа восстановлена", BROADCAST_TEXT)
         self.assertIn("📋 Мои лиды", BROADCAST_TEXT)
         self.assertIn("💎 Анализ клиента", BROADCAST_TEXT)
         self.assertIn("✉️ Создать сообщение", BROADCAST_TEXT)
-        self.assertIn("Остальные функции бота продолжают работать", BROADCAST_TEXT)
+        self.assertIn("Спасибо за ожидание", BROADCAST_TEXT)
+        self.assertNotIn("временно недоступны", BROADCAST_TEXT)
+
+    def test_new_broadcast_has_a_distinct_identifier(self):
+        self.assertEqual(
+            BROADCAST_ID,
+            "lead-actions-service-restored-2026-08-02-v1",
+        )
 
     def test_schema_can_be_created_repeatedly(self):
         _ensure_schema(self.database)
