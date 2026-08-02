@@ -28,7 +28,7 @@ class OutreachLengthTests(unittest.TestCase):
         self.assertIn("потенциальный клиент", paragraphs[2])
         self.assertIn("можно закрыть", paragraphs[3])
         self.assertIn(niche, paragraphs[4])
-        self.assertIn("почему", "почему пишет именно этой компании")
+        self.assertIn("решил написать именно вам", paragraphs[4])
         self.assertGreaterEqual(len(message), 600)
         self.assertLessEqual(len(message), 850)
 
