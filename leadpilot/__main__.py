@@ -7,6 +7,7 @@ from .global_price_mode import install_global_price_mode
 from .hide_settings_button import install_hide_settings_button
 from .lead_action_buttons import install_lead_action_buttons
 from .niche_profile import install_niche_profile
+from .one_time_service_notice import install_one_time_service_notice
 from .personal_lead_ids import install_personal_lead_ids
 from .project_button_guard import install_project_button_guard
 from .project_questionnaires import install_project_questionnaires
@@ -52,6 +53,7 @@ install_trial_radar_paywall(LeadPilotBot)
 install_usage_integrity(Database)
 install_telegram_command_menu(LeadPilotBot)
 install_lead_action_buttons(LeadPilotBot)
+install_one_time_service_notice(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
 bot_module.LIVE_TARIFFS_TEXT = bot_module.LIVE_TARIFFS_TEXT.replace(
