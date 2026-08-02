@@ -13,18 +13,12 @@ from telegram import (
 from telegram.ext import ContextTypes
 
 
+# Короткое пользовательское меню, как в прежней версии бота.
+# Остальные slash-команды остаются рабочими при ручном вводе, но не
+# показываются в меню Telegram.
 DEFAULT_COMMANDS = (
     BotCommand("start", "Запустить бота"),
     BotCommand("menu", "Открыть главное меню"),
-    BotCommand("new_project", "Создать новый проект"),
-    BotCommand("projects", "Мои проекты"),
-    BotCommand("find", "Найти клиентов"),
-    BotCommand("leads", "Мои лиды"),
-    BotCommand("analyze", "Анализ клиента"),
-    BotCommand("message", "Создать сообщение"),
-    BotCommand("radars", "Создать радар"),
-    BotCommand("export", "Экспортировать лиды"),
-    BotCommand("analytics", "Аналитика лидов"),
     BotCommand("plans", "Тарифы"),
     BotCommand("limits", "Мои лимиты"),
     BotCommand("support", "Поддержка"),
@@ -32,12 +26,10 @@ DEFAULT_COMMANDS = (
     BotCommand("help", "Справка по командам"),
 )
 
-# Владелец видит обычное пользовательское меню и дополнительно /status и /users.
-# /radar_run, /role и /cancel остаются рабочими при ручном вводе, но не
-# показываются в меню Telegram ни у владельца, ни у обычных пользователей.
+# У владельца отображается то же меню и только две дополнительные команды.
 OWNER_COMMANDS = DEFAULT_COMMANDS + (
-    BotCommand("status", "Проверить работу бота"),
     BotCommand("users", "Пользователи, тарифы и лимиты"),
+    BotCommand("status", "Проверить работу бота"),
 )
 
 
