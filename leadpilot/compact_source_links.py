@@ -1,14 +1,23 @@
 from __future__ import annotations
 
 import html
+import re
+from functools import wraps
 from typing import Any
 from urllib.parse import urlparse
 
-from telegram import ReplyKeyboardRemove, Update
+from telegram import Message, ReplyKeyboardRemove, Update
 
 from . import bot as bot_module
 from . import owner_emergency_actions as owner_actions
 from .models import Lead
+
+
+SOURCE_LINE_RE = re.compile(
+    r"^\s*Источник:\s*(https?://\S+)\s*$",
+    re.IGNORECASE,
+)
+_REPLY_TEXT_PATCHED = False
 
 
 def _clip(value: object, limit: int) -> str:
@@ -50,6 +59,63 @@ def _source_link(url: object) -> str:
         return label
     escaped_url = html.escape(raw, quote=True)
     return f'<a href="{escaped_url}">{label}</a>'
+
+
+def _compact_plain_source_text(value: object) -> tuple[str, bool]:
+    """Turn raw source URL lines into compact HTML links.
+
+    This is intentionally applied only to messages that do not already use a
+    parse mode. Every other line is escaped before HTML mode is enabled, so
+    company names and addresses containing &, < or > remain safe.
+    """
+    text = str(value or "")
+    changed = False
+    rendered: list[str] = []
+
+    for line in text.splitlines():
+        match = SOURCE_LINE_RE.fullmatch(line)
+        if match:
+            rendered.append(f"Источник: {_source_link(match.group(1))}")
+            changed = True
+        else:
+            rendered.append(html.escape(line, quote=False))
+
+    if not changed:
+        return text, False
+    return "\n".join(rendered), True
+
+
+def _install_global_reply_text_patch() -> None:
+    """Cover every current and future plain-text lead output path."""
+    global _REPLY_TEXT_PATCHED
+    if _REPLY_TEXT_PATCHED:
+        return
+
+    original_reply_text = Message.reply_text
+
+    @wraps(original_reply_text)
+    async def reply_text(self: Message, *args: Any, **kwargs: Any):
+        # Existing HTML/Markdown messages already control their own rendering.
+        if kwargs.get("parse_mode") is None and not kwargs.get("entities"):
+            if args:
+                original_text = args[0]
+            else:
+                original_text = kwargs.get("text", "")
+
+            compact_text, changed = _compact_plain_source_text(original_text)
+            if changed:
+                if args:
+                    args = (compact_text, *args[1:])
+                else:
+                    kwargs["text"] = compact_text
+                kwargs["parse_mode"] = "HTML"
+                if "link_preview_options" not in kwargs:
+                    kwargs.setdefault("disable_web_page_preview", True)
+
+        return await original_reply_text(self, *args, **kwargs)
+
+    Message.reply_text = reply_text
+    _REPLY_TEXT_PATCHED = True
 
 
 def _format_lead_html(lead: Lead) -> str:
@@ -136,25 +202,26 @@ def _analysis_text(lead: Lead) -> str:
 
     text = (
         f"💎 Анализ клиента · ID {lead.id}\n\n"
-        f"Компания: {_clip(lead.name, 300)}\n"
+        f"Компания: {html.escape(_clip(lead.name, 300))}\n"
         f"Рейтинг: {int(lead.score)}/100\n"
-        f"Контакт: {_clip(lead.contact, 500)}\n"
-        f"Адрес: {_clip(lead.address or 'не найден', 500)}\n"
-        f"Описание: {_clip(lead.snippet or 'нет данных', 1000)}\n\n"
-        f"Сильные сигналы: {', '.join(strengths) or 'не обнаружены'}\n"
-        f"Что проверить: {', '.join(gaps) or 'критичных пробелов нет'}\n\n"
+        f"Контакт: {html.escape(_clip(lead.contact, 500))}\n"
+        f"Адрес: {html.escape(_clip(lead.address or 'не найден', 500))}\n"
+        f"Описание: {html.escape(_clip(lead.snippet or 'нет данных', 1000))}\n\n"
+        f"Сильные сигналы: {html.escape(', '.join(strengths) or 'не обнаружены')}\n"
+        f"Что проверить: {html.escape(', '.join(gaps) or 'критичных пробелов нет')}\n\n"
         "Следующий шаг: проверьте источник и подготовьте персональное "
         "сообщение без массовой рассылки."
     )
     if lead.source_url and not str(lead.source_url).startswith(
         ("demo://", "serpapi://")
     ):
-        text += f"\nИсточник: {_source_label(str(lead.source_url))}"
+        text += f"\nИсточник: {_source_link(lead.source_url)}"
     return text
 
 
 def install_compact_source_links() -> None:
-    """Replace only the owner lead output with compact clickable source labels."""
+    """Use compact clickable source labels in every lead output path."""
     owner_actions._lead_blocks = _lead_blocks
     owner_actions._send_leads = _send_leads
     owner_actions._analysis_text = _analysis_text
+    _install_global_reply_text_patch()
