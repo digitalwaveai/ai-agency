@@ -19,6 +19,7 @@ from .project_search_context import install_project_search_context
 from .radar_inline_controls import install_radar_inline_controls
 from .radar_menu_access_fix import install_radar_menu_access_fix
 from .role_policy import install_role_policy
+from .scheduled_radar_source_links import install_scheduled_radar_source_links
 from .scheduled_radars import install_scheduled_radars
 from .search_quality import install_search_quality
 from .search_reliability import install_resilient_search
@@ -59,6 +60,7 @@ install_telegram_command_menu(LeadPilotBot)
 install_lead_action_buttons(LeadPilotBot)
 install_owner_emergency_actions(LeadPilotBot)
 install_compact_source_links()
+install_scheduled_radar_source_links()
 install_one_time_service_notice(LeadPilotBot)
 
 # Меняем только текст пробного тарифа. Сами лимиты и их списание не затрагиваются.
